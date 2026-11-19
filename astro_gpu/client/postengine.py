@@ -37,13 +37,16 @@ A Combine layers layer may also have ``side_masks = {"stars": mask, "starless": 
 that side): each is applied to its side's image, after that side's filters and before the two are put together, so
 the stars (or the background) are absent where it is black. An absent field is no side mask (older projects).
 
-A Combine layers layer over a combination of filters (S-H-O, H-O, the recipes mixed through hues or a matrix) is the
-combination's master layer when its workflow says so; its hues and its filters' intensities are then its own
-(``tune``, written once changed: client/postfusion.py) (``fusion``, given by the model: client/postfusion.py, never
-saved): its starless image is the mix of the filters, made here, and each filter is a sub-image of its own under it
-(``role_sub``: "f:SII"...), with its eye (``shown``), its mask (``side_masks``) and its filters (``sub``), which act on
-that filter before the mix. The filters are stretched by one factor per pixel, the same for all of them, before the
-mix (render/simple.SimpleRenderEngine.colour_factor): a factor is linear, so the colour ratios keep their meaning.
+A Combine layers layer has a layer tree (``nest``, given by the model from the graph: client/postfusion.py,
+graphcore/post.mix_tree; never saved): a side that is a combination of filters (S-H-O, H-O, the recipes mixed through hues
+or a matrix; the stars' combination too) is a mix Post makes again, any combination that reads another combination is a
+mix inside it, and a combination Post cannot remake (a block after it, its depth, a recipe composed as lightness and
+colour) is a fixed image, said on its row. Each node of the tree (its path names it in every saved key:
+``postfusion.child``, "f:SII", "f:Ha/f:OIII", "stars/f:R") is a sub-image of its own under its parent, with its eye
+(``shown``), its mask (``side_masks``) and its filters (``sub``), which act on it before its parent mixes it. A mix's hues
+and intensities are its own (``tune`` for the starless side's, ``tunes`` for the others: written once changed). The
+filters are stretched by one factor per pixel, the same for the whole mix at any depth (client/postmix.py;
+render/simple.SimpleRenderEngine.colour_factor): a factor is linear, so the colour ratios keep their meaning.
 
 Every layer may have a ``mask = {parts, feather, density, invert}`` of parts (H-alpha, luminance, color, gradient,
 brush), each added, subtracted or intersected. Pixel sizes are full-resolution pixels: at a reduced resolution they are
@@ -824,7 +827,7 @@ def _finish_reads(s) -> str:
 
 
 class _SideHeld:
-    """A master layer's starless image before the end of its stretch, kept (``Composer._fusion_side``): the mix
+    """A side that is a mix of the layer tree before the end of its stretch, kept (``Composer._mix_side``): the mix
     (3, h, w) and its covered pixels (bool); ``nbytes`` for the cache."""
     __slots__ = ("y", "valid", "nbytes")
 
@@ -1295,6 +1298,16 @@ def sub_name(lay: dict, sub: str) -> str:
     if above is not None:
         return str((above["fusion"].get("names") or {}).get(role, role))
     return role
+
+
+def sibling_paths(lay: dict, sub: str) -> list[str]:
+    """The nodes that share ``sub``'s parent in the layer's tree (the eyes Alt+click on one shows alone): the sides of the
+    layer, or the other inputs of a node's mix, the node itself among them, in their order."""
+    nodes = nodes_of(lay)
+    if sub in SUBS:
+        return [x for x in SUBS if x in nodes]
+    above = mix_at(lay, pf.parent(sub))
+    return [pf.child(pf.parent(sub), r) for r in above["fusion"]["roles"]] if above is not None else [sub]
 
 
 def read_paths(lay: dict, sub: str) -> list[str]:

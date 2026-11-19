@@ -294,7 +294,6 @@ class MixRendering:
     def _default(self, lay, root, level, abox, canvas, cache):
         """(the mix's picture as its run made it, before the end of its stretch (3, h, w), clamped; the covered pixels;
         {path: the image of each node before its filters}): all nodes shown, none with a filter."""
-        import torch
         T, leaf, one, c0, vf = self._pass(lay, root, level, abox, canvas, cache)
         rec: dict = {}
         y, _pre = self._eval(lay, pe.mix_at(lay, root), root, leaf, one, c0, None, rec)

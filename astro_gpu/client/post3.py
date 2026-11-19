@@ -107,18 +107,17 @@ from .postengine import (
     SUB_ROWS,
     SideLayer,
     READS_IMAGE,
-    fusion_roles,
+    eyes_open,
     has_mix,
     is_fusion,
     mix_at,
     nodes_of,
     read_paths,
-    role_sub,
+    sibling_paths,
     is_side,
     mask_selection,
     selection_side,
     sub_name,
-    sub_role,
     subs_of,
     SUBS,
     THUMB,
@@ -186,6 +185,7 @@ RETITLE = "retitle"
 #: the note a fixed node of the layer tree carries on its row (graphcore post.mix_tree: a combination whose mix Post
 #: cannot remake, said, never silent), and what its hover says by the reason (postfusion.plain_reason's "lightness" or
 #: the tree's "after" and "depth": the block that fixes it is named)
+NODE_FIXED = "The structure is the graph's: this row cannot be dragged"
 FIXED_NOTE = "Mix fixed"
 FIXED_TIPS = {"after": "The {combination} mix is fixed by the {block} block: Post shows its image as that block made it.",
               "depth": "The {combination} mix is fixed by the {block} block, which reads it as an image",
@@ -736,6 +736,7 @@ class EyeBox(QCheckBox):
         super().__init__(parent)
         self.setFixedSize(20, 20)
         self.setCursor(Qt.PointingHandCursor)
+        self.dimmed = False                               # under a hidden node: as the layers of a hidden group
 
     def hitButton(self, pos):                             # noqa: N802 - Qt's name
         return self.rect().contains(pos)
@@ -743,6 +744,8 @@ class EyeBox(QCheckBox):
     def paintEvent(self, e):                              # noqa: N802
         p = QPainter(self)
         on = self.isChecked()
+        if self.dimmed:
+            p.setOpacity(0.4)
         p.drawPixmap(2, 2, pixmap("eye" if on else "eye_off", 16, "normal" if on else "dim", self.devicePixelRatioF()))
         p.end()
 
@@ -812,12 +815,15 @@ class LayerRow(QFrame):
         self.setFixedHeight(ROW_H)                      # one short line each, whatever it holds (#88)
         h.setContentsMargins(4, 0, 6, 0)
         h.setSpacing(6)
-        eye = EyeBox()
+        eye = self.eye = EyeBox()
         eye.setChecked(lay["visible"])
         eye.setToolTip(_("Show / hide layer"))
+        eye.dimmed = panel.dimmed(lay)
         if lay["kind"] == "sub":
             eye.setToolTip(_("Show / hide the real stars: hidden, the synthetic stars show alone") if lay["sub"] == "real"
-                           else _("Show / hide this image in its Combine layers layer"))
+                           else _("Show / hide this image in its Combine layers layer") if lay["sub"] in SUBS
+                           else _("Show / hide this filter in its mix: the filters under it keep their eyes, dimmed"))
+            eye.setToolTip(eye.toolTip() + NL + _("Alt: show only this one among its siblings; Alt again: as they were"))
             eye.toggled.connect(lambda v: panel.set_shown(lay["id"], lay["sub"], v))
         else:
             eye.toggled.connect(lambda v: panel.set_visible(lay["id"], v))
@@ -839,6 +845,11 @@ class LayerRow(QFrame):
             self.toggle.setFixedSize(TOGGLE_W, TOGGLE_W)
             self.toggle.setStyleSheet("QToolButton { border: none; padding: 0; }")
             self.toggle.clicked.connect(lambda: panel.toggle_children(key))
+            self.toggle.setContextMenuPolicy(Qt.ActionsContextMenu)     # as a group's triangle in the reference editor
+            self.toggle.addAction(_("Expand all")).triggered.connect(lambda: panel.fold_all(False))
+            self.toggle.addAction(_("Collapse all")).triggered.connect(lambda: panel.fold_all(True))
+            self.toggle.setToolTip(_("Show / hide what is under it") + NL +
+                                   _("Alt: it and everything nested in it · Ctrl: every row of the panel"))
             h.addWidget(self.toggle)
         else:
             h.addSpacing(TOGGLE_W)
@@ -864,7 +875,7 @@ class LayerRow(QFrame):
         v.setSpacing(0)
         self.n = ElidedLabel(layer_name(lay), mode=Qt.ElideRight)     # a long name never widens the row
         self.n.setMinimumWidth(60)
-        self.n.setStyleSheet("font-weight: 600;" + ("" if lay["visible"] else " color: #8b93a1;"))
+        self.n.setStyleSheet("font-weight: 600;" + ("" if lay["visible"] and not eye.dimmed else " color: #8b93a1;"))
         v.addWidget(self.n)
         self._names = v
         # its blend, shortened before the name is (the night test pass: "Cou…" for Curves beside "on all below · Normal")
@@ -886,11 +897,15 @@ class LayerRow(QFrame):
             self.setToolTip(_("The stars of the Stars/background block, under the synthetic stars: they show where the "
                               "synthetic stars' mask is black"))
         elif lay["kind"] == "sub" and lay["sub"] not in SUBS:
-            self.setToolTip(_("One filter of the combination: its own filters, mask and spot healing act on it "
-                              "before the filters are mixed"))
+            if pf.root_of(lay["sub"]) == "stars":
+                self.setToolTip(_("Stretched with the stars mix: its own filters, mask and spot healing act on it "
+                                  "before the filters are mixed") + NL + _(NODE_FIXED))
+            else:
+                self.setToolTip(_("One filter of the combination: its own filters, mask and spot healing act on it "
+                                  "before the filters are mixed") + NL + _(NODE_FIXED))
         elif lay["kind"] == "sub":
             self.setToolTip(_("The filters nested here apply to this image only, before the stars are put back on "
-                              "the starless image"))
+                              "the starless image") + NL + _(NODE_FIXED))
         elif is_synth(lay):
             self.setToolTip(_("The stars of the Synthetic stars block: where the mask is white they replace the real "
                               "stars, where it is painted black the real stars show"))
@@ -1251,6 +1266,7 @@ class PostView(QWidget):
         self.draft_ms: list[float] = []
         self.draft_level = CPU_DRAFT_LEVEL if cpu else DRAFT_LEVEL
         self._collapsed: set[int] = set()                # the pixel layers whose children are hidden in the panel
+        self._solo: dict = {}                            # (layer id, node) shown alone with Alt: the eyes as they were
         self._missing_images: set[str] = set()           # image layers' keys whose pixels the worker did not find
         self._drop = None                                # the drop the drag shows (see drop_at)
         self._restoring = False                          # a step of the workflows' Undo being undone/redone here
@@ -3170,7 +3186,12 @@ class PostView(QWidget):
         ids = {lay["id"] for lay in self.layers}
         self._collapsed = {c for c in self._collapsed if (c[0] if isinstance(c, tuple) else c) in ids}
         if self.sel and (lay := self.layer(self.sel[0])) is not None and lay.get("target"):
-            self._collapsed -= {lay["target"], (lay["target"], lay.get("sub"))}     # the selected filter is shown
+            above = {lay["target"]}                                                   # the selected filter is shown
+            sub = lay.get("sub")
+            while sub:
+                above.add((lay["target"], sub))
+                sub = pf.parent(sub) if is_side(sub) and sub not in SUBS else None
+            self._collapsed -= above
         for lay, depth in rows(self.layers, self._collapsed):
             sl = self.sel is not None and self.sel[0] == lay["id"]
             if lay["kind"] == "sub" or (sl and _sub_selected(self.sel[1])):   # a sub-layer: (its layer, it)
@@ -3278,18 +3299,83 @@ class PostView(QWidget):
         self.rebuild(props=False)
         self.request(final_only=True)                    # no draft: the steps below it are kept, it is quick (#87)
 
+    def dimmed(self, lay) -> bool:
+        """Whether a row's eye is drawn dimmed: a node (or a filter on one) under a node whose eye is off, as the layers of a
+        hidden group are; the eyes under it keep their state."""
+        own = self.layer(lay["id"]) if lay.get("id") is not None else None
+        if own is None or not is_group(own):
+            return False
+        if lay["kind"] == "sub" and lay["sub"] not in SUBS and is_side(lay["sub"]):
+            return not eyes_open(own, pf.parent(lay["sub"]))
+        if lay["kind"] == "filter" and lay.get("sub") and is_side(lay["sub"]):
+            return not eyes_open(own, lay["sub"])
+        return False
+
     def set_shown(self, lid, sub, v):
-        """One of a Stars and background layer's two images shown or not in it (issue #3)."""
+        """One of a Stars and background layer's two images, or a node of its tree, shown or not in it (issue #3). With
+        Alt held: only that one is shown among its siblings, and the same again gives the eyes back as they were."""
+        lay = self.layer(lid)
         self.push()
-        self.layer(lid)["shown"][sub] = v
+        if QApplication.keyboardModifiers() & Qt.AltModifier and sub in nodes_of(lay):
+            sibs = sibling_paths(lay, sub)
+            now = {x: lay["shown"].get(x, True) for x in sibs}
+            alone = {x: x == sub for x in sibs}
+            if now == alone and self._solo.get((lid, sub)) is not None:       # again: as they were
+                lay["shown"].update(self._solo.pop((lid, sub)))
+            else:
+                self._solo[(lid, sub)] = {x: lay["shown"].get(x, True) for x in sibs}
+                lay["shown"].update(alone)
+        else:
+            lay["shown"][sub] = v
         self.rebuild(props=False)
         self.request(final_only=True)
+
+    def _foldable(self) -> set:
+        """The keys of ``_collapsed`` of every row that has rows under it."""
+        out = set()
+        for lay in self.layers:
+            if not is_pixel(lay):
+                continue
+            kids = children(self.layers, lay["id"])
+            if kids or is_group(lay):
+                out.add(lay["id"])
+            if is_group(lay):
+                for sub in subs_of(lay):
+                    inner = mix_at(lay, sub)
+                    if any(k.get("sub") == sub for k in kids) or inner is not None:
+                        out.add((lay["id"], sub))
+        return out
+
+    def fold_all(self, shut: bool):
+        """Every row of the panel opened or closed (the triangle's menu, Ctrl+click)."""
+        self._collapsed = self._foldable() if shut else set()
+        self.rebuild()
+
+    def _nested_keys(self, key) -> set:
+        """``key`` and the keys of every node nested in it (Alt+click on its triangle)."""
+        lid, sub = key if isinstance(key, tuple) else (key, None)
+        lay = self.layer(lid)
+        out = {key}
+        if lay is None or not is_group(lay):
+            return out
+        for path in subs_of(lay):
+            if sub is None or (path.startswith(sub + "/") if sub not in SUBS else pf.root_of(path) == sub
+                               and path != sub):
+                out.add((lid, path))
+        return out & (self._foldable() | {key})
 
     def toggle_children(self, key):
         """The arrow: show or hide the rows under a layer (``key`` its id), or under one of a Stars and background
         layer's two images (``key`` (its id, the image)); the image does not change. A hidden filter that was selected
         leaves the selection to the row it is under."""
-        self._collapsed ^= {key}
+        mods = QApplication.keyboardModifiers()
+        if mods & Qt.ControlModifier:                    # every row of the panel
+            return self.fold_all(key not in self._collapsed)
+        keys = self._nested_keys(key) if mods & Qt.AltModifier else {key}     # it and what is nested in it
+        if key in self._collapsed:
+            self._collapsed -= keys
+        else:
+            self._collapsed |= keys
         if key in self._collapsed and isinstance(key, tuple) and key[1] == "stars" and self.sel == (key[0], "real"):
             self.sel = key                               # the real stars folded in their Stars group: the group (#93)
         cur = self.layer(self.sel[0]) if self.sel else None
@@ -3335,10 +3421,12 @@ class PostView(QWidget):
                 if is_f and r.lay["kind"] == "sub" and 0.28 <= rel <= 0.72:
                     # onto the real stars: the bottom of the Stars group, under the synthetic stars (#93)
                     real = r.lay["sub"] == "real"
-                    index = len([c for c in children(self.layers, r.lay["target"]) if c["id"] not in mine]) if real else 0
+                    bottom = real or bool(QApplication.keyboardModifiers() & Qt.ShiftModifier)   # Shift: at the bottom
+                    index = len([c for c in children(self.layers, r.lay["target"]) if c["id"] not in mine]) if bottom else 0
                     return {"parent": r.lay["target"], "index": index, "row": i, "sub": "stars" if real else r.lay["sub"],
                             "text": _('Applies to "{name}" only').format(
-                                name=_(sub_name(self.layer(r.lay["id"]) or r.lay, r.lay["sub"])))}
+                                name=_(sub_name(self.layer(r.lay["id"]) or r.lay, r.lay["sub"]))) +
+                            (" · " + _("at the bottom") if bottom and not real else "")}
                 gap = i if rel < 0.5 else i + 1
                 break
         above = rs[gap - 1] if gap > 0 else None
@@ -3515,6 +3603,8 @@ class PostView(QWidget):
             m.addSeparator()                             # what it cannot do, greyed with why (B2, B3)
             why = _("One of the images of “{name}”: it stays in its layer. Duplicate, rename, move or delete the "
                     "layer itself").format(name=layer_name(self.layer(lay["id"]) or lay))
+            if lay["sub"] not in SUBS:
+                why = _(NODE_FIXED) + NL + _("Duplicate, rename or delete the layer itself")
             for txt in ("Duplicate", "Rename", "Delete"):
                 a = m.addAction(_(txt))
                 a.setEnabled(False)
@@ -4065,6 +4155,8 @@ class PostView(QWidget):
                                             "only, before the stars are put back on the starless image.").format(
                                                 name=layer_name(lay)), "small", wrap=True))
             self._part_props(lay, "stars" if self.sel[1] == "real" else self.sel[1])
+            if self.sel[1] in SUBS and mix_at(lay, self.sel[1]) is not None:     # a side that is a combination: its settings
+                self.fusion_props(lay, self.sel[1])
         else:
             self.layer_props(lay)
         self.pbox.addStretch(1)

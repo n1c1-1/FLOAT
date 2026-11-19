@@ -433,5 +433,14 @@
   "Mix fixed": "Mélange figé",
   "The {combination} mix is fixed by the {block} block: Post shows its image as that block made it.": "Le mélange de {combination} est figé par le bloc {block} : Post montre son image telle que ce bloc l'a faite.",
   "The {combination} mix is fixed by the {block} block, which reads it as an image": "Le mélange de {combination} est figé par le bloc {block}, qui le lit comme une image",
-  "Copies the hues and intensities Inspect gave this combination in the graph into this layer; nothing else changes. Ctrl+Z takes the copy back": "Copie dans ce calque les teintes et les intensités que Inspecter a données à cette combinaison dans le graphe ; rien d'autre ne change. Ctrl+Z reprend la copie"
+  "Copies the hues and intensities Inspect gave this combination in the graph into this layer; nothing else changes. Ctrl+Z takes the copy back": "Copie dans ce calque les teintes et les intensités que Inspecter a données à cette combinaison dans le graphe ; rien d'autre ne change. Ctrl+Z reprend la copie",
+  "Expand all": "Tout ouvrir",
+  "Collapse all": "Tout fermer",
+  "Alt: it and everything nested in it · Ctrl: every row of the panel": "Alt : cette ligne et tout ce qui y est imbriqué · Ctrl : toutes les lignes du panneau",
+  "Alt: show only this one among its siblings; Alt again: as they were": "Alt : montrer seulement celui-ci parmi ses voisins ; Alt encore : comme avant",
+  "Show / hide this filter in its mix: the filters under it keep their eyes, dimmed": "Afficher / masquer ce filtre dans son mélange : ceux qu'il contient gardent leur œil, atténué",
+  "Stretched with the stars mix: its own filters, mask and spot healing act on it before the filters are mixed": "Étiré avec le mélange des étoiles : ses filtres, son masque et sa retouche de taches agissent sur lui avant le mélange des filtres",
+  "The structure is the graph's: this row cannot be dragged": "La structure est celle du graphe : cette ligne ne se déplace pas",
+  "Duplicate, rename or delete the layer itself": "Dupliquez, renommez ou supprimez le calque lui-même",
+  "at the bottom": "en bas"
 }
