@@ -322,9 +322,10 @@ class LayersEditor(DraftEditor):
         image (its stretch, its sliders): Post's sections, Post's names, Post's ranges."""
         from ..render.sliders import STARS as STARS_GROUP
         from ..render.sliders import STRENGTH_STEP, STRETCH_KEY, group_title
+        from ..render.sliders import ONE_SIDED, slider_lo
         from ..render.sliders import top as slider_top
         from .combineedit import STARS, STARS_LINE, STARS_NAME
-        from .post3 import BLENDS, ContSlider, layer_slider_state, slider_name
+        from .post3 import BLENDS, ContSlider, layer_slider_state, slider_name, slider_show, slider_tip
         from .postengine import LAYER_STRETCHES, STRETCH_NAMES
         u = self._ui
         lay = self.block_layer()
@@ -374,8 +375,9 @@ class LayersEditor(DraftEditor):
                         self._wire_cont(sl, STRETCH_KEY)
                         cv.addWidget(sl)
                         u[SLIDER + STRETCH_KEY] = sl
-            sl = ContSlider(slider_name(sd.key, sd.name), 0, slider_top(sd.key), 2.0, 2, ends=[_(e) for e in sd.ends],
-                            show=_texts()(sd.key))
+            sl = ContSlider(slider_name(sd.key, sd.name), slider_lo(sd.key), slider_top(sd.key), 2.0, 2, ends=[_(e) for e in sd.ends],
+                            show=slider_show(sd.key) if sd.key in ONE_SIDED else _texts()(sd.key))
+            sl.setToolTip(slider_tip(sd.key))
             sl.setObjectName(sd.key)
             ok, why = layer_slider_state(self.s, self.p, lay, sd.key, "combined", stretch_now)   # Post's rule
             sl.set_available(ok, why)

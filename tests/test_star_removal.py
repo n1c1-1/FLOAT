@@ -252,7 +252,7 @@ def test_a_wider_star_shrinks_whole_without_a_ring():
 
 def test_the_sliders_of_each_kind():
     ok = S.availability("combined", True)
-    assert not any(ok[k] for k in ("sky", "contrast", "saturation", "star_strength", "star_small", "star_size",
+    assert not any(ok[k] for k in ("sky", "contrast", "saturation", "star_strength", "star_share", "star_size",
                                    "star_color"))
     assert ok["noise"] == S.WHY_WHOLE
     stars = S.availability("stars", True)

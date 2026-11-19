@@ -71,6 +71,7 @@ from ..core.project2 import active_version
 from ..render.sliders import ARCSINH_WHY, STRENGTH_STEP
 from ..render.sliders import STARS as STARS_GROUP
 from ..render.sliders import group_title
+from ..render.sliders import slider_lo
 from ..render.sliders import top as slider_top
 from . import prefs
 from .combineedit import HUE_RAIL, INTENSITY_MAX, INTENSITY_STEP, FineDrag, intensity_at, intensity_u
@@ -282,6 +283,23 @@ def layer_slider_state(s, p, lay: dict, key: str, part, stretch: str | None = No
     if ok and key == "colours" and is_master(s, lay):
         return False, _("The combination keeps its colours: one stretch factor for every filter")
     return ok, why
+
+
+def share_text(v: float) -> str:
+    """A one-sided slider's value (Small stars: position 2 = none .. 4 = all) as the share it is."""
+    return f"{round((float(v) - 2.0) * 50)} %"
+
+
+def slider_show(key: str):
+    """What a layer's slider shows beside its name: its offset from the default, or the share of a one-sided one."""
+    from ..render.sliders import ONE_SIDED
+    return share_text if key in ONE_SIDED else offset_text
+
+
+def slider_tip(key: str) -> str:
+    """The tooltip of a one-sided slider (the generic one, double-click, for the others)."""
+    from ..render.sliders import ONE_SIDED
+    return _("Share of the stars removed, the smallest first. Double-click: default value") if key in ONE_SIDED         else _("Double-click: default value")
 
 
 def slider_name(key: str, name: str) -> str:
@@ -4221,8 +4239,9 @@ class PostView(QWidget):
 
     def _add_slider(self, lay, p, sd, part):
         pos = lay["sliders"].get(sd.key, 2.0)
-        sl = ContSlider(slider_name(sd.key, sd.name), 0, slider_top(sd.key), pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
-                        show=offset_text)
+        sl = ContSlider(slider_name(sd.key, sd.name), slider_lo(sd.key), slider_top(sd.key), pos, 2, ends=[_(e) for e in sd.ends] if sd.ends else None,
+                        show=slider_show(sd.key))
+        sl.setToolTip(slider_tip(sd.key))
         ok, why = layer_slider_state(self.s, p, lay, sd.key, part)
         sl.set_available(ok, why)
         self._wire(sl, lambda v, k=sd.key: self._slider(lay, k, v))

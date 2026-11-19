@@ -381,6 +381,10 @@ def _go_on(check) -> None:
         check()
 
 
+#: a Gaussian star's size (the radius of the opening that takes half of its peak) in units of its sigma: sqrt(2 ln 2)
+SIZE_PER_SIGMA = math.sqrt(2 * math.log(2))
+
+
 def star_sizes(y: torch.Tensor, fwhm: float, check=None):
     """The stars of a stars-alone image (3, h, w) and their sizes: the local maxima (7 x 7) of the luminance above
     STAR_LEVEL, and for each the radius of the grey opening that takes half of its peak away, from the openings by
@@ -426,8 +430,13 @@ def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torc
     the artefact of a flat structuring element, which a paraboloid, the rolling ball of Sternberg 1983, does not cure:
     its cap stays as a wider dim star); a plateau of radius r cannot hold a disc of 2 r, so the opening by 2 r replaces
     them and keeps what is wider than the stars taken away: a large star's halo. The places of the removed stars are
-    spread by r (a star is as wide as the disc that takes it out) and softened by sigma = r / 2.355, the Gaussian width
-    of a star whose FWHM is r; a star that is kept has no place in it. All of them (f = 1): nothing is left."""
+    spread by 2 r (a Gaussian star of size r is down to 1/16 of its peak there: exp(-2.77), twice its half-width) and
+    softened by the sigma of such a star (r / SIZE_PER_SIGMA); a star that is kept has no place in it. All of them
+    (f = 1): nothing is left. The constants, all by definition: 7 x 7 (the stars' local maxima, as ``measure_fwhm``
+    takes them), STAR_LEVEL (the stars' level, as everywhere here), 1/2 (the peak a size is measured at: the half),
+    2 r (a plateau of r cannot hold a disc of 2 r), n = twice the field's FWHM (a bound of the sizes measured, for the
+    time: a star more than four times as wide as the typical one is given the last rank, the biggest), and the setting's
+    range end 2 = all. Nothing is fitted on an image."""
     if f <= 0:
         return y
     if f >= 1:
@@ -445,7 +454,7 @@ def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torc
     _go_on(check)
     base = torch.minimum(_morph(_morph(y, 2 * rho, False), 2 * rho, True), first)      # the opening by 2 r
     _go_on(check)
-    w = ops.gaussian_blur(_morph(mark, 2 * rho, True), rho / 2.355)[0].clamp(0, 1)
+    w = ops.gaussian_blur(_morph(mark, 2 * rho, True), rho / SIZE_PER_SIGMA)[0].clamp(0, 1)
     return y - w * (y - base)
 
 
