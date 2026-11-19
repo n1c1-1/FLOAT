@@ -1041,6 +1041,7 @@ class PostSource:
         self.full = None                                  # (box, uint8 array) at full resolution
         self.canvas = None                                # (W, H)
         self._enlarged = (None, None)                     # the draft on the screen's grid, and what it was made from
+        self.part = None                                  # a zoomed-in draft: (its box at its level, the level, rgb, enlarged)
 
     def size(self):
         return self.canvas or (2, 2)
@@ -1057,6 +1058,24 @@ class PostSource:
                 self._enlarged = (src, _to_grid(*src[:2], src[2], src[3], smooth=True))
             return self._enlarged[1]
         return self.img1
+
+    def _paste_part(self, out, x0, y0, x1, y1):
+        """The zoomed-in draft over the pixels asked, enlarged smoothly to the canvas's pixels (once per draft)."""
+        (bx0, by0, bx1, by1), level, rgb, big = self.part
+        f = 2.0 ** level
+        if big is None:
+            import cv2
+            cx0, cy0 = int(round(bx0 * f)), int(round(by0 * f))
+            cw, ch = int(round(bx1 * f)) - cx0, int(round(by1 * f)) - cy0
+            big = (cx0, cy0, cv2.resize(np.ascontiguousarray(rgb), (cw, ch), interpolation=cv2.INTER_LINEAR))
+            self.part = ((bx0, by0, bx1, by1), level, rgb, big)
+        cx0, cy0, arr = big
+        ix0, iy0 = max(x0, cx0), max(y0, cy0)
+        ix1, iy1 = min(x1, cx0 + arr.shape[1]), min(y1, cy0 + arr.shape[0])
+        if ix1 > ix0 and iy1 > iy0:
+            out = np.array(out)
+            out[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] = arr[iy0 - cy0:iy1 - cy0, ix0 - cx0:ix1 - cx0]
+        return out
 
     def region(self, level, x0, y0, x1, y1):
         """The pixels (x0..x1, y0..y1) of the screen's picture (level 1) or of the canvas (level 0)."""
@@ -1705,6 +1724,7 @@ class PostView(QWidget):
         self._hold_t.setSingleShot(True)
         self._hold_t.timeout.connect(self._show_held)
         self._main_seq = 0                               # the newest draft or release request (the exact view's, Q1)
+        self._region_seq = None                          # the full resolution of the part shown, asked and not come yet
         self._failed_seq = 0                             # the newest request that failed (no "Updating…" for it)
         self._exact_wait = None                          # the release whose exact view is on its way (still updating)
         self._exact_seq = None                           # (the number of that request)
@@ -2208,8 +2228,29 @@ class PostView(QWidget):
         self._draft_dirty = True
         want, overlay = self._selected_wants()
         self._final_kind = "draft"
+        level, box = self._draft_view()
         self._main_seq = self.worker.request(Request(kind="draft", layers=snapshot(self.layers),
-                                                     level=self._draft_level(), want=want, overlay=overlay))
+                                                     level=level, box=box, want=want, overlay=overlay))
+
+    def _draft_view(self) -> tuple[float, tuple | None]:
+        """What a draft makes: the whole canvas at ``_draft_level``, and zoomed in (the screen shows the canvas at half
+        or finer: the half picture enlarged would show blocks as large as the zoom) only the part of it shown, at the
+        level whose pixels are the same few screen pixels as when the whole canvas is shown (the drag's picture is
+        a quarter of the screen's pixels, whatever the zoom: the size of the work does not grow with it)."""
+        box = self.visible_box()
+        if box is None:
+            return self._draft_level(), None
+        v = self.viewer
+        lv = math.floor(math.log2(1.0 / (v.scale * v.devicePixelRatioF())) * 8 + 1e-9) / 8
+        level = max(0.0, lv + (self.draft_level - HALF_LEVEL))
+        W, H = self._grid_of(level)
+        f = 2.0 ** level
+        b = (max(0, int(box[0] / f)), max(0, int(box[1] / f)), min(W, int(math.ceil(box[2] / f))),
+             min(H, int(math.ceil(box[3] / f))))
+        return (level, b) if b[2] > b[0] and b[3] > b[1] else (self._draft_level(), None)
+
+    def _grid_of(self, level: float) -> tuple[int, int]:
+        return _grid(self.src.canvas or (2, 2), level)
 
     def screen_level(self) -> float:
         """The level of the screen's picture: the size the view shows the canvas at (``render.screen_level``), in the
@@ -2322,6 +2363,7 @@ class PostView(QWidget):
         if self.src.img1 is not None and self.screen_level() < self.src.level1 - 1e-9 and not self._draft_dirty:
             self._final_t.start(REGION_WAIT_MS)                # zoomed in: the picture at the finer size shown
         self._region_t.start(REGION_WAIT_MS)
+        self._tell_refining()
 
     def visible_box(self):
         """The part of the image to render at full resolution when zoomed in: what the viewer shows with a quarter more
@@ -2349,7 +2391,8 @@ class PostView(QWidget):
         if self.src.img1 is None:
             return
         if not (f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2] and f[0][3] >= box[3]):
-            self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
+            self._region_seq = self.worker.request(Request(kind="region", layers=snapshot(self.layers), level=0, box=box))
+        self._tell_refining()
         self._send_before_region(box)
 
     def _empty_banner(self) -> str:
@@ -2426,7 +2469,13 @@ class PostView(QWidget):
             self._hists.update(res.hists)
             self._show_hist()
         if res.kind in ("draft", "half", "refine"):
-            if res.kind in ("draft", "refine"):
+            if res.kind == "draft" and res.box is not None:         # zoomed in: the part shown, at its own level
+                self.src.part = (res.box, res.level, res.rgb, None)
+                self.src.seq2 = res.seq
+                self.draft_ms = (self.draft_ms + [res.ms])[-4:]
+                self._adapt_draft()
+            elif res.kind in ("draft", "refine"):
+                self.src.part = None
                 self.src.img2, self.src.seq2, self.src.level2 = res.rgb, res.seq, res.level
                 if res.kind == "draft":
                     self.draft_ms = (self.draft_ms + [res.ms])[-4:]
@@ -2461,9 +2510,12 @@ class PostView(QWidget):
                 self._exact_wait = res.seq                     # the picture changes once more: "Refining…" below
                 self._tell_refining()
         elif res.kind == "region":
+            if res.seq == self._region_seq:
+                self._region_seq = None
             self.src.full = (res.box, res.rgb)
             self.src.version += 1
             self.viewer.refresh()
+            self._tell_refining()
         elif res.kind == "before":
             if res.tag is None or res.tag == self._before_gen:       # (not an older choice's picture)
                 self.before.img1, self.before.level1 = res.rgb, res.level
@@ -2509,7 +2561,11 @@ class PostView(QWidget):
         if kind in ("draft", "half", "refine"):
             self._failed_seq = max(self._failed_seq, seq)
             self.viewer.update()
-        elif kind == "exact":                            # the half resolution stays: no more updating to wait for
+        elif kind == "region":
+            if seq == self._region_seq:
+                self._region_seq = None
+            self._tell_refining()
+        if kind == "exact":                            # the half resolution stays: no more updating to wait for
             self._exact_wait = None
             self.viewer.update()
             self._tell_refining()
@@ -2681,8 +2737,17 @@ class PostView(QWidget):
         return self._done_seq < self._main_seq
 
     def is_refining(self) -> bool:
-        """The full resolution's picture of the last release is on its way (the screen's one is shown)."""
-        return self._exact_wait is not None and self._exact_wait == self._main_seq
+        """The full resolution's picture of the last release is on its way (the screen's one is shown), or, zoomed in,
+        the part shown at full resolution (the enlarged half picture is on the screen until it comes: 15 s on a
+        processor, and the status said nothing)."""
+        if self._exact_wait is not None and self._exact_wait == self._main_seq:
+            return True
+        box = self.visible_box()
+        if box is None or self.src.img1 is None or not (self._region_seq is not None or self._region_t.isActive()):
+            return False
+        f = self.src.full
+        return not (f is not None and f[0][0] <= box[0] and f[0][1] <= box[1] and f[0][2] >= box[2]
+                    and f[0][3] >= box[3])
 
     def _tell_refining(self):
         on = self.is_refining()
@@ -4717,8 +4782,8 @@ class PostView(QWidget):
             return
         self._attach_fusion()
         # (not shown: the picture stays the exact one until a move changes it)
-        self.worker.request(Request(kind="draft", layers=snapshot(self.layers), level=self._draft_level(),
-                                    tag="prime"))
+        level, box = self._draft_view()
+        self.worker.request(Request(kind="draft", layers=snapshot(self.layers), level=level, box=box, tag="prime"))
 
     def _wire_editor(self, ed: CurvesEditor):
         """The Curves panel: a draft while a point moves; on release the exact render and one undo step (the state

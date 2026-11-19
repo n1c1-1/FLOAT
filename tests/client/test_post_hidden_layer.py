@@ -125,3 +125,42 @@ def test_the_draft_of_a_drag_is_enlarged_smoothly():
     assert src._half() is a                                                   # enlarged once, not at each paint
     src.img2 = np.full((8, 8, 3), 77, np.uint8)
     assert (src._half() == 77).all()
+
+
+def test_a_drag_zoomed_in_is_drawn_at_the_screen_s_size_not_in_blocks(two):
+    """The drag's picture of a view zoomed in is made for the part shown, at a level whose pixels are a few screen
+    pixels (four at most), not the half picture enlarged (blocks as large as the zoom: 20 to 30 px)."""
+    s, v = two, two.view
+    top = next(x for x in v.layers if pe.is_pixel(x))
+    last = next(x for x in v.layers if x["kind"] == "filter" and x.get("target") == top["id"])
+    sl = slider_of(v, last, "Strength")
+    v.viewer.zoom_to(3.0)
+    assert s.settle()
+    got = []
+    v.rendered.connect(got.append)
+    drag(s, sl, steps=5, release=True)
+    v.rendered.disconnect(got.append)
+    drafts = [r for r in got if r.kind == "draft"]
+    assert drafts and all(r.box is not None for r in drafts), "a zoomed drag made the whole canvas"
+    for r in drafts:
+        block = 3.0 * 2.0 ** r.level
+        assert block <= 4.5, f"a draft pixel is {block:.1f} screen pixels"
+        assert (r.box[2] - r.box[0]) * (r.box[3] - r.box[1]) < 1.5e6
+    v.viewer.zoom_to(0.2)
+    assert s.settle()
+
+
+def test_zoomed_in_the_status_says_refining_until_the_full_resolution_is_there(two):
+    """Zoom 100 % shows the enlarged half picture until the part shown comes at full resolution (15 s on a processor):
+    the status line says Refining... for all that time, and no longer after."""
+    s, v = two, two.view
+    said = []
+    v.refining.connect(said.append)
+    v.viewer.zoom_to(1.0)
+    v._view_changed()
+    assert v.is_refining(), "zoomed in, the part shown is awaited and nothing says so"
+    assert s.settle()
+    assert not v.is_refining() and said and said[0] is True and said[-1] is False, said
+    v.refining.disconnect(said.append)
+    v.viewer.zoom_to(0.2)
+    assert s.settle()
