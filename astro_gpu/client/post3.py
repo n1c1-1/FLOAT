@@ -1424,14 +1424,16 @@ class PostView(QWidget):
             probe.hide()
         return self._item_width(probe)
 
-    def _bar_need(self, k: int, shown: tuple = ()) -> int:
+    def _bar_need(self, k: int, shown: tuple | None = None) -> int:
         """The bar's width with the first ``k`` steps of ``_bar_steps`` taken, as its layout works it out (its widgets'
-        widths, its spacings, its margins), the bar left as it is; ``shown``: widgets counted as shown that are not now."""
+        widths, its spacings, its margins), the bar left as it is. ``shown``: with it, the bar as it would be with only these
+        of its moments' widgets (Compare's list, the crop's Apply and Cancel) shown, whatever shows now."""
         steps = self._bar_steps()
         hidden = [w for kind, w in steps[:k] if kind == "hide"]
         icons = [w for kind, w in steps[:k] if kind == "icon"]
         narrow = [w for kind, w in steps[:k] if kind == "narrow"]
         steered = [w for _kind, w in steps]
+        moments = (self.cb_cmp, self.b_crop_ok, self.b_crop_cancel)
         texts = self._bar_texts()
         bar = self.top_bar
         m = bar.contentsMargins()
@@ -1442,7 +1444,10 @@ class PostView(QWidget):
             if w is None:                                # the space after the zoom, the stretch
                 total += item.sizeHint().width()
                 continue
-            if not (w not in hidden if w in steered else (w in shown or not w.isHidden())):
+            if w in steered:
+                if w in hidden:
+                    continue
+            elif (w not in shown) if (shown is not None and w in moments) else w.isHidden():
                 continue
             n += 1
             if w in texts:
@@ -1457,7 +1462,7 @@ class PostView(QWidget):
         """The centre's least width: the bar at its narrowest, with what only some moments add to it (Compare's list, the
         crop's Apply and Cancel: never together), and the tool column. The splitter never squeezes the bar below it."""
         k = len(self._bar_steps())
-        need = max(self._bar_need(k), self._bar_need(k, (self.cb_cmp,)),
+        need = max(self._bar_need(k, ()), self._bar_need(k, (self.cb_cmp,)),
                    self._bar_need(k, (self.b_crop_ok, self.b_crop_cancel)))
         return max(CENTRE_MIN, need + STRIP_W)
 

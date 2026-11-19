@@ -56,6 +56,7 @@ def test_the_tools_and_the_bar_all_fit_at_every_laptop_size(env, size, lang):  #
     w = _open(env, size)
     view = _post_view(w)
     _everything_fits(w, view, ("plain", size, lang))
+    least, centre = view.centre.minimumWidth(), view.centre.width()
     view.b_cmp.setChecked(True)                                         # Compare's list in the bar
     _everything_fits(w, view, ("compare", size, lang))
     assert view.cb_cmp.isVisible()
@@ -63,6 +64,10 @@ def test_the_tools_and_the_bar_all_fit_at_every_laptop_size(env, size, lang):  #
     view.b_crop.setChecked(True)                                        # the crop's Apply and Cancel in the bar
     _everything_fits(w, view, ("cropping", size, lang))
     assert view.b_crop_ok.isVisible() and view.b_crop_cancel.isVisible()
+    assert view.centre.minimumWidth() == least                          # the minimum is the same whichever moment it is
+    view.b_crop.setChecked(False)
+    _settle(w)
+    assert view.centre.width() == centre                                # and the splitter never moved for a tool
     view.b_crop.setChecked(False)
 
 
