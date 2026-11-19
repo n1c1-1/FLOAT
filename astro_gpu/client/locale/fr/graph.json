@@ -618,6 +618,7 @@
   "{block} not placed: a combination block goes just before Post, which adjusts its layers; drop it on one of the places lit for it": "{block} : rien de placé, un bloc de combinaison va juste avant Post, qui ajuste ses calques ; déposez-le sur l'une des places allumées pour lui",
   "Post, with this block's layer selected": "Post, avec le calque de ce bloc sélectionné",
  "Undo stretch": "Défaire étirement",
+ "Colours calibrated (from the header)": "Couleurs calibrées (d'après l'en-tête)",
  "Read the image as it is": "Lire l'image telle quelle",
  "Estimated": "Estimé",
  "Bring the stretch back to linear by an estimated inverse: the levels come back linear up to an offset and a scale": "Ramener l'étirement au linéaire par un inverse estimé : les niveaux reviennent linéaires à un décalage et une échelle près",

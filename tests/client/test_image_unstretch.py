@@ -186,3 +186,41 @@ def test_denoise_adapted_is_greyed_on_an_image_with_its_reason(model, tmp_path):
         assert ada[0].toolTip() == WHY_NO_ADAPTED
     finally:
         page.close()
+
+
+# ------------------------------------------------------------------------------------------------ colours calibrated (#174)
+
+CALIBRATED = ("Photometric CC", "Photometric CC (algorithm: SPCC)", "Photometric Color Calibration",
+              "Spectrophotometric Color Calibration", "Color Calibration", "Background neutralization")
+
+
+@pytest.mark.parametrize("line", CALIBRATED)
+def test_every_wording_of_a_colour_calibration_is_found_and_changes_the_key(tmp_path, line):
+    _l, f = stretched_file(tmp_path / "c.fits", line=None)
+    hdr = write_fits(tmp_path / "c2.fits", linear_image(sky=0.02, sigma=0.01), [line, "Background extraction (Correction: Subtraction)"])
+    assert U.colour_line(hdr) == line
+    p, w = make(tmp_path, hdr)
+    assert "colour-calibrated" in Keys(p).key_parts(w.id, "image")["x"]
+    out, log = run_image(p, w)
+    assert "colours calibrated, from the header" in log
+    assert json.loads((next((tmp_path / "p").rglob("drz_meta.json"))).read_text())["colour_calibrated"] == line
+
+
+def test_without_such_a_line_nothing_changes(tmp_path):
+    hdr = write_fits(tmp_path / "n.fits", linear_image(sky=0.02, sigma=0.01), ["Background extraction (Correction: Subtraction)"])
+    assert U.colour_line(hdr) == ""
+    p, w = make(tmp_path, hdr)
+    assert Keys(p).key_parts(w.id, "image")["x"] == Keys(p).scan.image_id(str(hdr))
+    _o, log = run_image(p, w)
+    assert "colours calibrated" not in log
+
+
+def test_the_image_block_states_the_calibrated_colours(model, tmp_path):
+    hdr = write_fits(tmp_path / "c.fits", linear_image(sky=0.02, sigma=0.01), ["Photometric CC"])
+    plain = write_fits(tmp_path / "p.fits", linear_image(sky=0.02, sigma=0.01), [])
+    q = model.add_image_workflow("Image", "")
+    model.set_graph(q, [])
+    model.set_image_file(q, str(plain))
+    assert model.image_colours(q) == ""
+    model.set_image_file(q, str(hdr))
+    assert model.image_colours(q) == "Photometric CC"

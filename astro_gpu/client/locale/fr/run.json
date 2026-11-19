@@ -285,6 +285,8 @@
  "Bayer drizzle does not apply to frames already in colour (no mosaic of raw colour samples to drop): choose the Classic stack": "Le drizzle Bayer ne s'applique pas aux images déjà en couleur (pas de mosaïque de pixels bruts à déposer) : choisissez l'empilement classique",
  "{0} {1} cannot be read and are left out (damaged or empty files?): {2}": "{0} fichier(s) de {1} illisible(s), mis de côté (abîmés ou vides ?) : {2}",
  "no light frame can be read (damaged or empty files?): {0}; take them out of the session": "aucune brute lisible (fichiers abîmés ou vides ?) : {0} ; retirez-les de la session",
+ "colours calibrated by the image's header: kept as they are, each channel's sky made grey": "couleurs calibrées par l'en-tête de l'image : gardées telles quelles, le ciel de chaque canal rendu gris",
+ "colours calibrated, from the header ({0}): the Output does not balance them again": "couleurs calibrées, d'après l'en-tête ({0}) : la sortie ne les rééquilibre pas",
  "no colour calibration: camera colours, each channel's sky made grey and scaled to the same spread (gains {0})": "sans calibration des couleurs : couleurs de l'appareil, le ciel de chaque canal rendu gris et ramené au même écart (gains {0})",
  "colour mosaic pattern: {0} peaks notched (strongest {1} x the spectrum around)": "motif de la mosaïque couleur : {0} pics atténués (le plus fort {1} x le spectre autour)",
  "{0}: its stars match none of the reference's: not the same field": "{0} : ses étoiles ne correspondent à aucune de la référence : ce n'est pas le même champ",

@@ -2376,6 +2376,19 @@ class _ProjectBase(QObject):
         out["warning"] = ". ".join(x.rstrip(".") for x in parts) + "."
         return out
 
+    def image_colours(self, p) -> str:
+        """The header line of an Image block's file that says its colours were calibrated (issue #174), "" when none or
+        when the image is read as stretched (the Output does not balance a stretched image)."""
+        src = getattr(p, "source", None)
+        if not isinstance(src, dict) or "fusion" in src or not src.get("path") or src.get("stretched"):
+            return ""
+        from ..stages.image import image_problem
+        path = self.p.abspath(src["path"])
+        if image_problem(path):
+            return ""
+        from ..stages.unstretch import colour_line
+        return colour_line(path)
+
     def image_warning(self, p) -> str:
         """The warning of an Image block about its file's stretch (``image_state``), "" when none."""
         return self.image_state(p)["warning"]

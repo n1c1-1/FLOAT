@@ -204,8 +204,14 @@ class ImageSource(Stage):
         _c, H, W = a.shape
         ctx.save("drz_full.npy", a.astype(np.float32))
         ctx.save("drz_weight.npy", np.ones((3, H, W), np.float32))
+        from .unstretch import colour_line
+        said = colour_line(p.path)                     # the colours the header says were calibrated (the Output keeps them)
         ctx.save_json("drz_meta.json", {"scale": 1.0, "source": "image", "file": Path(p.path).name,
-                                        "factor": factor, "height": H, "width": W})
+                                        "factor": factor, "height": H, "width": W} | (
+                                           {"colour_calibrated": said} if said else {}))
+        if said:
+            ctx.metric("colour_calibrated", True)
+            ctx.log(f"colours calibrated, from the header ({said}): the Output does not balance them again")
         ctx.metric("width", W)
         ctx.metric("height", H)
         ctx.metric("factor", factor)

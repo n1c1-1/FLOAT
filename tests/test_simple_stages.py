@@ -400,3 +400,18 @@ def test_every_auto_key_of_heart_a7s_is_in_auto_fields(tmp_path):
         assert keys <= allowed, (st.name, keys)
     assert seen["stack"] and seen["denoise"] == {"adaptation"} and seen["calibrate"] == {"workers"}
     assert {p: p.stat().st_mtime_ns for p in (HEART_A7S / "work").rglob("manifest.json")} == before
+
+
+def test_a_calibrated_image_is_not_balanced_again(tmp_path):
+    """An Image whose header says the colours were calibrated (meta colour_calibrated, #174): the Raw exit keeps its
+    colour ratios (no gains); without it, the gains equalise the sky spread as before."""
+    ratios = {}
+    for name, extra in (("plain", {}), ("calibrated", {"colour_calibrated": "Photometric CC"})):
+        proj, _, _ = make_project(tmp_path / name, denoise=False, color=False, gradient=False)
+        mp = proj.stage_dir("stack") / "drz_meta.json"
+        mp.write_text(json.dumps({**json.loads(mp.read_text()), **extra}))
+        out = run_stage(proj, RenderSimple(), RenderSimpleParams())
+        prep = json.loads((out.dir / "prep_simple.json").read_text())
+        ratios[name] = prep["gains"]
+    assert max(abs(g - 1.0) for g in ratios["plain"]) > 0.01
+    assert ratios["calibrated"] == [1.0, 1.0, 1.0]

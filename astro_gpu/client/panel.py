@@ -1097,6 +1097,7 @@ class Panel(QWidget):
         st = s.image_state(p) if path else {"warning": "", "estimate_off": "", "estimated": False}
         if st["warning"]:                                   # issue #174: said, never refused
             self.bv.addWidget(label(st["warning"], "warn", wrap=True))
+        self._image_colours_line(p)
         if path and not stretched:
             self.bv.addWidget(self.group_title(_("Undo stretch")))
             row = QHBoxLayout()
@@ -1120,6 +1121,14 @@ class Panel(QWidget):
             self.bv.addWidget(label(_("The blocks after it read it as a stack. Denoise takes it as a single image: "
                                       "Pretrained only, its noise measured on the image."), "small", wrap=True))
         self.bv.addStretch(1)
+
+    def _image_colours_line(self, p):
+        """One line when the file's header says its colours were calibrated (#174): the Output keeps them."""
+        said = self.s.image_colours(p)
+        if said:
+            w = label(_("Colours calibrated (from the header)"), "small", wrap=True)
+            w.setToolTip(said)
+            self.bv.addWidget(w)
 
     def _choose_image(self, p):
         from . import prefs as _prefs

@@ -369,6 +369,10 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         (r"^no colour calibration: camera colours, each channel's sky made grey and scaled to the same spread \(gains "
          r"(.+)\)$", "no colour calibration: camera colours, each channel's sky made grey and scaled to the same spread "
                      "(gains {0})", ()),
+        (r"^colours calibrated by the image's header: kept as they are, each channel's sky made grey$",
+         "colours calibrated by the image's header: kept as they are, each channel's sky made grey", ()),
+        (r"^colours calibrated, from the header \((.+)\): the Output does not balance them again$",
+         "colours calibrated, from the header ({0}): the Output does not balance them again", ()),
         (r"^colour mosaic pattern: (\d+) peaks notched \(strongest (\d+) x the spectrum around\)$",
          "colour mosaic pattern: {0} peaks notched (strongest {1} x the spectrum around)", ()),
         (r"^(.+): its stars match none of the reference's: not the same field$",

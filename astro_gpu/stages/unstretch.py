@@ -389,6 +389,21 @@ def read_history(path: str | Path) -> tuple[tuple, int]:
     return _header(str(p), st.st_mtime_ns, st.st_size)
 
 
+#: the lines (HISTORY) the reference program writes when it calibrates the colours, from its source: "Photometric CC"
+#: (releases 1.2, and 1.4 with " (algorithm: PCC|SPCC)"), "Photometric Color Calibration" and "Spectrophotometric Color
+#: Calibration" (the current development version, ``photometric_cc_log_hook``), "Color Calibration" (the colour
+#: calibration of the whole image) and "Background neutralization" (the sky taken to a neutral level)
+COLOUR_LINES = re.compile(r"photometric\s+(?:cc\b|colou?r\s+calibration)|^colou?r\s+calibration|background\s+neutrali[sz]ation",
+                          re.I)
+
+
+def colour_line(path: str | Path) -> str:
+    """The header line that says the colours were already calibrated (``COLOUR_LINES``), "" when none: the header is
+    read for what it says (issue #174); FLOAT then does not balance the colours a second time."""
+    lines, _ch = read_history(path)
+    return next((x.strip() for x in lines if COLOUR_LINES.search(x.strip())), "")
+
+
 def plan_of_file(path: str | Path) -> Plan:
     """The plan of a FITS file's header (header only: cheap; the key of the Image block reads it)."""
     lines, ch = read_history(path)
