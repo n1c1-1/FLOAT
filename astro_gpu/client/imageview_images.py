@@ -270,8 +270,13 @@ def read_file(path: str | os.PathLike, frame: bool = False) -> tuple[np.ndarray,
             hdu = next((h for h in hl if getattr(h, "data", None) is not None), hl[0])
             data, hdr = np.asarray(hdu.data), hdu.header
         if frame:
-            from ..io.frames import fits_adu
-            data = fits_adu(data, hdr)
+            # in ADU and the way up the engine reads it (io/frames: its rows put top first by the frame's rule, the
+            # one function the engine's reader uses): a master stored bottom up was shown upside down (issue #174)
+            from ..io.frames import _rows_top_down, fits_adu, frame_bottom_up
+            data = np.ascontiguousarray(_rows_top_down(fits_adu(data, hdr), hdr))
+            if frame_bottom_up(hdr) and "CTYPE1" in hdr and data.ndim >= 2:
+                from ..render.layers import flip_rows_wcs
+                hdr = flip_rows_wcs(hdr, data.shape[-2])        # its solution follows the rows, exactly
         cfa = str(hdr.get("BAYERPAT", "")).strip().upper() if data.ndim == 2 else ""
         wcs = None
         if "CTYPE1" in hdr:
