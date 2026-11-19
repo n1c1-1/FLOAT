@@ -14,9 +14,10 @@ stretching them less is the star reduction: no reduction is needed on the recomb
   midtone moved by ``star_strength``; the smallest stars taken away (``star_small``: the share of the stars removed, the smallest first, the
   star reduction of photo editors' tutorials; each star measured by the grey opening that takes half of its peak, the
   removal an opening by twice that radius, so that the wider light stays; on the stars alone, so the nebula's
-  texture is never touched); their size by a round grey erosion (smaller) or dilation (larger), as the reference image editor's
-  Minimum and Maximum filters with Preserve roundness (an octagon: a cross and a square in turn, the usual
-  approximation of a disc), never a square; smaller on their light wider than the erosion only (the faint stars and
+  texture is never touched); their size by a round grey erosion (smaller), as the reference image editor's Minimum filter with
+  Preserve roundness (an octagon: a cross and a square in turn, the usual approximation of a disc), never a square, or
+  by a dilation by a rounded, non-flat structuring function (larger: ``grow_round``, a flat element would leave bokeh
+  discs and polygons); smaller on their light wider than the erosion only (the faint stars and
   the narrow light added back as they were: a faint star keeps its shape) and through a star mask (``star_mask``: the stars standing above
   their local background's noise), as those tutorials select the stars first, so that the grain between the stars of
   a dense field is not eroded into filaments; their colour by a saturation around the luminance;
@@ -437,6 +438,24 @@ def star_sizes(y: torch.Tensor, fwhm: float, check=None):
     return ys, xs, size
 
 
+def star_reach(L: torch.Tensor, ys: torch.Tensor, xs: torch.Tensor, cap: int) -> torch.Tensor:
+    """The extent of each star (pixels, 1 .. cap): the distance at which its light, the least of the 8 directions
+    (the 4 axes and the 4 diagonals, at the same distance, so that a neighbour's light in some of them does not hold it), is down to
+    STAR_LEVEL, where a star ends (as everywhere here); ``cap`` (a dense field's stars never come down) for those
+    that do not."""
+    h, w = L.shape
+    out = torch.full((ys.numel(),), float(cap))
+    done = torch.zeros(ys.numel(), dtype=torch.bool)
+    for d in range(1, cap + 1):
+        v = torch.stack([L[(ys + round(dy * d / math.hypot(dy, dx))).clamp(0, h - 1),
+                           (xs + round(dx * d / math.hypot(dy, dx))).clamp(0, w - 1)]
+                         for dy in (-1, 0, 1) for dx in (-1, 0, 1) if dy or dx]).amin(0)
+        hit = (~done) & (v < STAR_LEVEL)
+        out[hit] = d
+        done |= hit
+    return out
+
+
 def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torch.Tensor:
     """The share f (0 none .. 1 all) of the field's stars removed, the smallest first, the biggest last, on the stars
     alone. The stars are those of ``star_sizes`` and are ranked by their size, the f of them that are the smallest are
@@ -444,17 +463,19 @@ def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torc
 
     The removal of a star of size s, by the grey openings (Meyer 1979, Serra 1982), none of them tied to a connected
     zone (a fixed level joins all the stars of a dense field): the opening by a disc of the largest size taken away, r,
-    takes the peaks of those stars, and leaves a plateau of about r where each was (a disc, brown on a coloured field:
-    the artefact of a flat structuring element, which a paraboloid, the rolling ball of Sternberg 1983, does not cure:
-    its cap stays as a wider dim star); a plateau of radius r cannot hold a disc of 2 r, so the opening by 2 r replaces
-    them and keeps what is wider than the stars taken away: a large star's halo. The places of the removed stars are
-    spread by 2 r (a Gaussian star of size r is down to 1/16 of its peak there: exp(-2.77), twice its half-width) and
-    softened by the sigma of such a star (r / SIZE_PER_SIGMA); a star that is kept has no place in it. All of them
-    (f = 1): nothing is left. The constants, all by definition: 7 x 7 (the stars' local maxima, as ``measure_fwhm``
-    takes them), STAR_LEVEL (the stars' level, as everywhere here), 1/2 (the peak a size is measured at: the half),
-    2 r (a plateau of r cannot hold a disc of 2 r), n = twice the field's FWHM (a bound of the sizes measured, for the
-    time: a star more than four times as wide as the typical one is given the last rank, the biggest), and the setting's
-    range end 2 = all. Nothing is fitted on an image."""
+    takes the peaks of those stars, and leaves a plateau where each was (a disc, brown on a coloured field: the
+    artefact of a flat structuring element, which a paraboloid, the rolling ball of Sternberg 1983, does not cure: its
+    cap stays as a wider dim star); a plateau cannot hold a disc wider than the stars' own light, so the opening by a
+    disc that does not fit in them (their mean extent, ``star_reach``, + 1 pixel, and not under 2 r) replaces
+    them and keeps what is wider than the stars taken away: a large star's halo. The disc is not taken from a Gaussian
+    model of the star: a real star's wings reach past twice its half-peak radius, and the opening by 2 r left them as
+    a plateau, a ring ghost. The places of the removed stars are spread by that same disc (where the opening
+    replaced their light) and softened by the sigma of a star of size r (r / SIZE_PER_SIGMA); a star that is kept has
+    no place in it. All of them (f = 1): nothing is left. The constants, all by definition: 7 x 7 (the stars' local
+    maxima, as ``measure_fwhm`` takes them), STAR_LEVEL (the stars' level and end, as everywhere here), 1/2 (the peak a
+    size is measured at: the half), n = twice the field's FWHM (a bound of the sizes and extents measured, for the
+    time: a star more than four times as wide as the typical one is given the last rank, the biggest), and the
+    setting's range end 2 = all. Nothing is fitted on an image."""
     if f <= 0:
         return y
     if f >= 1:
@@ -466,26 +487,34 @@ def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torc
     if gone.numel() == 0:
         return y
     rho = max(1, int(math.ceil(float(size[gone].max()))))
-    mark = torch.zeros(1, *y.shape[-2:])
-    mark[0, ys[gone], xs[gone]] = 1.0
+    # the extent of each removed star, as measured (``star_reach``), not as a Gaussian of its size: a real star's wings
+    # reach past twice its half-peak radius, and what the openings left of them was a ring ghost
+    reach = star_reach(ops.luminance(y), ys[gone], xs[gone], max(2, int(math.ceil(2.0 * fwhm))))
     first = torch.minimum(_morph(_morph(y, rho, False), rho, True), y)
     _go_on(check)
-    base = torch.minimum(_morph(_morph(y, 2 * rho, False), 2 * rho, True), first)      # the opening by 2 r
+    # a disc that does not fit in the stars taken away (the radius of their mean extent + 1, and not under 2 r; the widest
+    # alone, in a dense field, is held up by its neighbours' light and would take the field with it): what is
+    # left where it stood cannot be a plateau of its own light
+    big = max(2 * rho, int(math.ceil(float(reach.mean()))) + 1)
+    base = torch.minimum(_morph(_morph(y, big, False), big, True), first)
     _go_on(check)
-    w = ops.gaussian_blur(_morph(mark, 2 * rho, True), rho / SIZE_PER_SIGMA)[0].clamp(0, 1)
+    mark = torch.zeros(1, *y.shape[-2:])
+    mark[0, ys[gone], xs[gone]] = 1.0
+    spread = _morph(mark, big, True)
+    w = ops.gaussian_blur(spread, rho / SIZE_PER_SIGMA)[0].clamp(0, 1)
     return y - w * (y - base)
 
 
 def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
-    """The stars shrunk (r < 0) or grown (r > 0) by |r| pixels: the two whole radii around |r|, mixed by its
-    fraction, so that the size moves smoothly with r."""
+    """The stars shrunk (r < 0) by |r| pixels (the two whole radii around |r|, mixed by its fraction, so that the size
+    moves smoothly with r) or grown (r > 0, ``grow_round``)."""
     if abs(r) < 1e-3:
         return y
-    n, t = int(abs(r)), abs(r) - int(abs(r))
     if r > 0:
-        lo = _morph(y, n, True)
+        out = grow_round(y, r)
         _go_on(check)
-        return lo if t < 1e-3 else (1 - t) * lo + t * _morph(y, n + 1, True)
+        return out
+    n, t = int(abs(r)), abs(r) - int(abs(r))
     # only the light wider than the erosion is eroded (``wide_light``), the narrower light (the faint stars, the beads of a
     # chain of touching ones, the top of a wide star) is added back as it was: an erosion of a faint star's light, or a
     # weight that erodes its flanks and spares its core (issue #169's ratio of the opening, 1 on a faint star's flanks and
@@ -499,6 +528,31 @@ def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
     # background between the stars draws a web of filaments on a dense field (issue #18)
     return y + (out - w) * star_mask(y, n + 1, check)
+
+
+def grow_round(y: torch.Tensor, r: float) -> torch.Tensor:
+    """The stars grown by r pixels, round, each keeping its peak and a rounded profile: the grey dilation by a
+    rotationally symmetric, non-flat structuring function, the quadratic one k(d) = 2^-(d / 2r)^2 (a Gaussian: 1 at the
+    centre, 1/2 at 2 r), in the max-product form (the dilation in the logarithm, the morphological analogue of a
+    Gaussian blur; Sternberg 1986, Grayscale morphology; van den Boomgaard and Dorst 1997, the quadratic structuring
+    function): out(p) = max_q y(q) k(|p - q|). A flat element (a disc, its polygonal approximation) leaves a plateau
+    and a polygonal outline on a small star, a bokeh disc; this one turns a Gaussian star of half-width h (at half its
+    peak) into a Gaussian of half-width sqrt(h^2 + 4 r^2): round, peak unchanged (a star of half-width 1.5 r grows by r,
+    as the flat disc moved its outline). The kernel is a product of two 1-D ones, so the dilation is two passes of
+    shifts; its support is 6 r (down to 2^-9)."""
+    m = max(1, int(math.ceil(6.0 * r)))
+    out = y
+    for axis in (-1, -2):
+        p = F.pad(out[None], (m, m, 0, 0) if axis == -1 else (0, 0, m, m), mode="replicate")[0]
+        n = out.shape[axis]
+        best = out
+        for j in range(1, m + 1):
+            k = 2.0 ** (-((j / (2.0 * r)) ** 2))
+            a = p.narrow(axis, m - j, n)
+            b = p.narrow(axis, m + j, n)
+            best = torch.maximum(best, k * torch.maximum(a, b))
+        out = best
+    return out
 
 
 def wide_light(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
