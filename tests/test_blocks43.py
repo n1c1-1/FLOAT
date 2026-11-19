@@ -451,7 +451,7 @@ def test_an_already_stretched_image_goes_to_post_as_it_is(tmp_path, nights):
 
 def test_a_linear_image_has_its_stars_taken_off_and_gives_its_starless_image_to_a_combination(tmp_path):
     """Issue #55, a real run on the CPU: an Image (a FITS file, no half-stack, no Denoise), its Output, its stars taken
-    off by the network, its noise unit read on its own sky; a combination's port reads its starless image."""
+    off by the network, its noise unit read on its own noise, times sqrt(2); a combination's port reads its starless image."""
     from astropy.io import fits
 
     from astro_gpu.stages.image import ImageParams, ImageSource
@@ -471,7 +471,8 @@ def test_a_linear_image_has_its_stars_taken_off_and_gives_its_starless_image_to_
         st.run(Context(pr, st, Journal(pr.logs), "cpu"), par)
     assert not (tmp_path / "image" / "drz_A.npy").exists()
     prep = json.loads((tmp_path / "split" / "prep_stars.json").read_text())
-    assert prep["unit"] == pytest.approx(sigma, rel=0.25)
+    # the unit of an image from a file is its own noise before denoising, times sqrt(2) (a stack's unit, #174)
+    assert prep["unit"] == pytest.approx(sigma * 2 ** 0.5, rel=0.1)
     lin = np.load(tmp_path / "out" / "lin.npy")
     starless, stars = np.load(tmp_path / "split" / "starless.npy"), np.load(tmp_path / "split" / "stars.npy")
     assert np.allclose(starless + stars, lin, atol=1e-2)                    # the two images add up to the Output's

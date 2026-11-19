@@ -14,7 +14,7 @@ def test_the_page_colours_are_those_of_today():
     """The values today's page drew with (graph.py, before the swap)."""
     assert (style.CUT_COL, style.GREY_COL, style.BROKEN_COL) == ("#6b7280", "#c9a227", "#e05252")
     assert style.STATE_COL == {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
-                               "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN}
+                               "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN, "earlier": WARN}
     assert style.IMAGE_COL["starless"] == "#7aa2d6"
     assert style.IMAGE_COL["stars_only"] == "#e0c45c"
     assert style.PALETTE_W == 140

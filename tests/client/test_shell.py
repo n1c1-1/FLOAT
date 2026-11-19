@@ -463,7 +463,7 @@ def test_no_prototype_leftovers():
     assert not found, "\n".join(found)
     for f in (CLIENT / "locale" / "fr").glob("*.json"):
         cat = json.loads(f.read_text(encoding="utf-8"))
-        assert not [k for k, v in cat.items() if re.search(r"(?i)mockup|maquette|\bdemo|démo", k + v)], f.name
+        assert not [k for k, v in cat.items() if re.search(r"(?i)mockup|maquette|\bdemo\b|\bdémo\b", k + v)], f.name
 
 
 def test_settings_hide_what_the_engine_lacks_outside_spec_mode(env, qapp):

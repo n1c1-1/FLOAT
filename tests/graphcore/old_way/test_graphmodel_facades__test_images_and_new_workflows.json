@@ -412,7 +412,7 @@
      "calibration": null,
      "end": null,
      "id": 2,
-     "name": "Image",
+     "name": "stack",
      "options": {
       "deconvolution": null,
       "denoise": null,
@@ -563,7 +563,7 @@
      "calibration": null,
      "end": null,
      "id": 2,
-     "name": "Image",
+     "name": "stack",
      "options": {
       "deconvolution": null,
       "denoise": null,
@@ -736,7 +736,7 @@
      "calibration": null,
      "end": null,
      "id": 2,
-     "name": "Image",
+     "name": "stack",
      "options": {
       "deconvolution": null,
       "denoise": null,
