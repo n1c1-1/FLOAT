@@ -196,3 +196,14 @@ def test_two_touching_stars_are_two_stars_or_none_never_one_elongated():
 def test_the_block_is_at_a_new_version_after_vetting():
     from astro_gpu.stages.synth_stars import SynthStars
     assert int(SynthStars.version) >= 3
+
+
+def test_what_is_not_a_star_is_not_carried_into_the_synthetic_layer():
+    L, pts, _ = field_of_stars()
+    h = L.shape[0] // 2
+    yy, xx = np.mgrid[:L.shape[0], :L.shape[1]]
+    L += 300 * np.exp(-((yy - h) ** 2 + (xx - h) ** 2) / (2 * 7.0 ** 2)).astype(np.float32)
+    s = np.stack([L, L, L]).astype(np.float32)
+    drawn, info = lib.from_the_image(s, np.ones(L.shape, bool), None)
+    assert info["stars_dropped"] >= 1
+    assert drawn[:, h - 20:h + 21, h - 20:h + 21].max() < 5            # no ghost disc, no lump where the blob was

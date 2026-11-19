@@ -252,15 +252,6 @@ def vet(L: np.ndarray, starless: np.ndarray | None, ys: np.ndarray, xs: np.ndarr
     return keep, why
 
 
-def _left_real(shape: tuple[int, int], ys, xs, size: float) -> np.ndarray:
-    """A soft mask (1 on the candidates that are not stars, 0 elsewhere): the light there is left as it is."""
-    m = np.zeros(shape, np.uint8)
-    r = int(math.ceil(2.5 * size))
-    for y, x in zip(ys.tolist(), xs.tolist()):
-        cv2.circle(m, (x, y), r, 1, -1)
-    return cv2.GaussianBlur(m.astype(np.float32), (0, 0), 1.0 + 0.4 * size).clip(0, 1)
-
-
 def _centre(p: np.ndarray, rad: float) -> tuple[float, float]:
     n = p.shape[0] // 2
     yy, xx = np.mgrid[-n:n + 1, -n:n + 1]
@@ -389,9 +380,8 @@ def from_the_image(s: np.ndarray, valid: np.ndarray, starless: np.ndarray | None
     k = ~real
     fl = _apertures(s, ys[k], xs[k], peaks[k], T, size)
     drawn = draw(*L.shape, ys[k], xs[k], _centres(L, ys[k], xs[k], size), fl, shape, T * 0.05)
-    mask = np.maximum(mask, _left_real(L.shape, rys, rxs, size))
     return drawn * (1 - mask) + s * mask, {"stars_drawn": int(k.sum()), "stars_kept": int(real.sum()),
-                                           "stars_left": int(len(rys)), **why}
+                                           "stars_dropped": int(len(rys)), **why}
 
 
 def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia: dict | None,
@@ -412,9 +402,8 @@ def from_the_instrument(s: np.ndarray, valid: np.ndarray, ins: Instrument, gaia:
     if gaia is not None:
         fl, n = saturated_fluxes(ys, xs, sat, fl, gaia, max(4.0, 2.5 * size))
     drawn = draw(*L.shape, ys, xs, _centres(L, ys, xs, size), fl, theoretical_shape(ins), T * 0.05)
-    mask = _left_real(L.shape, rys, rxs, size)
-    return drawn * (1 - mask) + s * mask, {"stars_drawn": len(ys), "stars_saturated": int(sat.sum()),
-                                           "stars_from_catalogue": n, "stars_left": int(len(rys)), **why}
+    return drawn, {"stars_drawn": len(ys), "stars_saturated": int(sat.sum()),
+                                           "stars_from_catalogue": n, "stars_dropped": int(len(rys)), **why}
 
 
 def draw(H: int, W: int, ys, xs, centres, fluxes, shapes, floor: float) -> np.ndarray:
