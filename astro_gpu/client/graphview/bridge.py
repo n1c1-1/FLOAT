@@ -218,6 +218,9 @@ class Bridge(QObject):
                 from ...graphcore.model import JOIN_KINDS
                 if r is not None and self.block(new) is not None and self.block(new).kind in JOIN_KINDS:
                     said = _("{block} added").format(block=self.doc.title(new))     # its one name (a row of its own)
+                elif r is not None and self.block(new) is not None and self.block(new).kind == "image"                         and not (self.block(new).source or {}).get("path"):
+                    from .style import kind_title      # no file yet: its workflow's name is a placeholder, never said
+                    said = _("{block} added").format(block=kind_title("image"))
                 elif r is not None and self.block(new) is not None:  # what was done, never the place's bubble
                     from .style import kind_title
                     said = _("{block} added to “{workflow}”").format(block=kind_title(self.block(new).kind),

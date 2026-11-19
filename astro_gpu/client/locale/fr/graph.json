@@ -429,6 +429,8 @@
   "Change image…": "Changer image…",
   "Choose image…": "Choisir image…",
   "Linear": "Linéaire",
+  "Linear (undone)": "Linéaire (défait)",
+  "Its stretch is undone: the blocks after it read it as a linear stack": "Son étirement est défait : les blocs suivants la lisent comme un empilement linéaire",
   "Stretched": "Étirée",
   "Straight out of a stack: the blocks after it read it as a stack": "Tout droit sortie d'un empilement : les blocs suivants la lisent comme un empilement",
   "Already stretched: it goes to Post as it is": "Déjà étirée : elle va à Post telle quelle",

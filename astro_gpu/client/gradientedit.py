@@ -784,10 +784,16 @@ class GradientEditor(QObject):
         if self.result is None:
             self.samples = self._computed_samples()
 
+    def _input_stage(self, p):
+        """The stage that gives the block its stack: "stack", or the Image block's of a workflow that starts from an
+        image file (its state is its own: no "stack" state exists there, the editor stayed black)."""
+        f = getattr(self.s, "input_stage", None)
+        return f(p) if f is not None and p is not None else "stack"
+
     def _stack_key(self, p=None):
         """The stack result the editor reads for the workflow (its own, else the one an Outdated stack still keeps)."""
         p = p or self.p
-        st = self.s.state_info(p, "stack") if p is not None and hasattr(self.s, "state_info") else None
+        st = self.s.state_info(p, self._input_stage(p)) if p is not None and hasattr(self.s, "state_info") else None
         if st is None:
             return None
         return st.key if st.state == "done" else st.previous_key
@@ -855,7 +861,7 @@ class GradientEditor(QObject):
         if p is None or self.drafting(p) or p.pid in self.carried:
             return False
         try:
-            st = self.s.state(p, "stack")
+            st = self.s.state(p, self._input_stage(p))
             if st == "done":
                 return False
             return not (st == "stale" and self.tv._has_previous(p, "empilement"))
