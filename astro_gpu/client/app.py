@@ -1553,6 +1553,8 @@ class Main(QMainWindow):
         self.a_run.setEnabled(frames and not empty and (todo or running))
         self.a_run.setToolTip(_("Run every workflow, up to the review pauses") if self.a_run.isEnabled() else
                               self.run_refusal(cost) or _("All up to date"))       # greyed: why (round 2)
+        from .graphnode import earlier_blocks
+        earlier = earlier_blocks(s) if s is not None and s.ready and n else 0
         if not n:
             line = _("No workflow yet") if s is not None and s.ready else ""
         else:
@@ -1587,12 +1589,15 @@ class Main(QMainWindow):
                 if not any(s.state(v, st) == "done" for v in s.paths for st in s.all_stages(v)):
                     line += "  ·  " + _("nothing computed yet: place blocks, or wire the inputs")
                 else:
-                    line += "  ·  " + _("all up to date")
+                    if not earlier:                       # a result of an earlier version is not "up to date"
+                        line += "  ·  " + _("all up to date")
                     idle = [w.name for w in s.p.workflows if no_block(w) and w.source is None
                             and any(x.lights for x in s.p.sessions_of(w.id))]
                     if idle:
                         line += "  ·  " + plural(len(idle), "{names}: no block yet", "{names}: no block yet",
                                                  names=", ".join(quoted(x) for x in idle))
+        if earlier and not running:                       # counted beside the rest (the graph shows them amber)
+            line += "  ·  " + plural(earlier, "{n} block in an earlier version", "{n} blocks in an earlier version")
         self._line = line
         self.status.setText(self._flash_html or self._flash or line)    # a word's link stays while it is said
 

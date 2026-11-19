@@ -2399,33 +2399,22 @@ class Panel(QWidget):
 
     def _earlier_found(self, node) -> list:
         """The (from, to) versions of the stages of this block computed with an earlier version of their method."""
-        from .graphnode import block_earlier
-        if getattr(node, "cut", False) or self.tune:
+        from .graphnode import node_earlier
+        if self.tune:
             return []
-        found: list = []
         try:
-            for q in node.paths:
-                own = self.s.block_map.session_stages(q, node.sid) if node.key == "calibration" and                     node.sid is not None else None
-                found += [v for v in block_earlier(self.s, q, node.ref, own) if v not in found]
+            return node_earlier(self.s, node)
         except (KeyError, ValueError, AttributeError, IndexError, TypeError):
             return []
-        return found
 
     def earlier_row(self, node, st) -> None:
         """A block whose result was computed with an earlier version of its method: one line saying so and the command
         that recomputes it with the current one (nothing is recomputed unless the user asks). Nothing for any other
         block, nor for one that is not up to date (a run computes it anyway)."""
-        from .graphnode import RECOMPUTE, RECOMPUTE_TIP, block_earlier, earlier_words
-        if st != "done" or getattr(node, "cut", False) or self.tune:
+        from .graphnode import RECOMPUTE, RECOMPUTE_TIP, earlier_words
+        if st != "done":
             return
-        found: list = []
-        try:
-            for q in node.paths:
-                own = self.s.block_map.session_stages(q, node.sid) if node.key == "calibration" and \
-                    node.sid is not None else None
-                found += [v for v in block_earlier(self.s, q, node.ref, own) if v not in found]
-        except (KeyError, ValueError, AttributeError, IndexError, TypeError):
-            return
+        found = self._earlier_found(node)
         if not found:
             return
         self.hv.addWidget(label(earlier_words(found), "small", wrap=True))

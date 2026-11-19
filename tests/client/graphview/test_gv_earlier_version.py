@@ -63,6 +63,10 @@ def test_the_block_says_it_discreetly_and_stays_up_to_date(qapp, boxes):
     p.canvas.viewport().repaint()
     pump()
     assert gr.earlier_rect().isValid() and not boxes
+    # amber, as a block that needs an update (the reference node editors): the band, with its reason and its action
+    from astro_gpu.client.graphview.style import STATE_COL
+    assert gr.band_colour() == STATE_COL["earlier"] != STATE_COL["done"] and st.band_colour() == STATE_COL["done"]
+    assert "Recompute (current version) to bring it up to date" in gr.toolTip()
     banner = getattr(p, "banner", None)
     assert banner is None or not banner.isVisible()
     p.close()
@@ -200,3 +204,19 @@ def test_real_panel_line_and_command_plan_the_recompute_and_post_still_renders(q
     finally:
         m.flush()
         w.wait(30)
+
+
+def test_a_block_of_an_earlier_version_is_counted_by_one_rule_for_the_graph_the_panel_and_the_status():
+    from astro_gpu.client.graphnode import earlier_blocks, node_earlier
+    info = {"gradient": api.StageState("done", "", "k1", earlier=("5", "6")),
+            "color": api.StageState("done", "", "k3")}
+    p = SimpleNamespace(pid=1, params={}, opts={})
+    node = lambda key, **k: SimpleNamespace(key=key, ref=key, paths=[p], sid=None, cut=False, grey="", **k)  # noqa: E731
+    nodes = [node("fond"), node("couleur"), node("session")]
+    bm = SimpleNamespace(nodes=nodes, state=lambda n: "done", session_stages=lambda q, sid: None)
+    m = SimpleNamespace(state_info=lambda q, s: info.get(s), state=lambda q, s: info[s].state, block_map=bm,
+                        all_stages=lambda q: list(info))
+    assert node_earlier(m, nodes[0]) == [("5", "6")] and node_earlier(m, nodes[1]) == []
+    assert earlier_blocks(m) == 1
+    nodes[0].cut = True                                         # cut: nothing is said of a block that is not run
+    assert earlier_blocks(m) == 0

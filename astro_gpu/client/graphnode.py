@@ -400,6 +400,34 @@ def block_earlier(s, p, key: str, stages=None) -> list[tuple[str, str]]:
     return out
 
 
+#: the blocks with no result of a method of their own: never "of an earlier version"
+NO_EARLIER = ("session", "post", "combine_layers")
+
+
+def node_earlier(s, node, kind: str = "") -> list[tuple[str, str]]:
+    """The (from, to) versions of the stages of a block of the map computed with an earlier version of their method,
+    over all its workflows; [] for a block cut or greyed, or with no result of its own. The one place that decides
+    it: the graph's amber state, the panel's line and chip and the status bar's count all read this."""
+    if getattr(node, "cut", False) or getattr(node, "grey", ""):
+        return []
+    if (kind or node.key) in NO_EARLIER:
+        return []
+    found: list = []
+    for q in node.paths:
+        own = s.block_map.session_stages(q, node.sid) if node.key == "calibration" and node.sid is not None else None
+        found += [v for v in block_earlier(s, q, node.ref, own) if v not in found]
+    return found
+
+
+def earlier_blocks(s) -> int:
+    """How many blocks of the project are up to date with a result of an earlier version of their method."""
+    try:
+        bm = s.block_map
+        return sum(1 for n in bm.nodes if bm.state(n) == "done" and node_earlier(s, n))
+    except (KeyError, ValueError, AttributeError, IndexError, TypeError):
+        return 0
+
+
 def _version_number(v: str) -> str:
     """A version as the user reads it: "4-9b974a78cb" (the number, then the hash of the network file a stage
     computes with) is "4"; the hash stays in the result's manifest."""
