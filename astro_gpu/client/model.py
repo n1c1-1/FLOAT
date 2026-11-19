@@ -2330,6 +2330,53 @@ class _ProjectBase(QObject):
         why = image_problem(self.p.abspath(src["path"]))
         return _(why).format(name=Path(str(src["path"])).name) if why else ""
 
+    def image_state(self, p) -> dict:
+        """What the Image block of workflow ``p`` says of its file's stretch (issue #174): {"warning": text (translated, ""
+        when none), "estimate_off": why the estimated inverse is not offered ("" when it is), "estimated": it is on}.
+        An exact undo from the header is automatic and silent: no warning. Read once per file state (stages/unstretch)."""
+        src = getattr(p, "source", None)
+        out = {"warning": "", "estimate_off": "", "estimated": False}
+        if not isinstance(src, dict) or "fusion" in src or not src.get("path"):
+            return out
+        from ..stages.image import image_problem
+        path = self.p.abspath(src["path"])
+        if image_problem(path):
+            out["estimate_off"] = _("Choose an image first")
+            return out
+        from ..stages import unstretch as U
+        an = U.analyse(path)
+        est = src.get("unstretch") == "estimated"
+        out["estimated"] = est
+
+        def say(t):
+            return _(t[0]).format(**t[1])
+        if src.get("stretched"):
+            out["estimate_off"] = _("An image read as stretched has no stretch to undo: choose Linear first")
+            if not an.stretched and an.sky is not None:
+                out["warning"] = _("This image looks linear (its sky is at {pct} % of white), though it is read as "
+                                   "stretched: it goes to Post as it is.").format(pct=f"{100 * an.sky:.0f}")
+            return out
+        if an.exact:
+            out["estimate_off"] = _("The header lists the stretch exactly: it is undone automatically")
+            return out
+        if not an.stretched:
+            out["estimate_off"] = _("This image does not look stretched")
+            return out
+        parts = [say(an.why)]
+        if an.refusal:
+            parts.append(say(an.refusal))
+        if est:
+            parts.append(_("The stretch is undone by estimate: the levels are linear up to an offset and a scale."))
+        else:
+            parts.append(_("It is read as a linear image: the noise and sky levels the next blocks measure would be wrong. "
+                           "Estimated brings it back to linear."))
+        out["warning"] = ". ".join(x.rstrip(".") for x in parts) + "."
+        return out
+
+    def image_warning(self, p) -> str:
+        """The warning of an Image block about its file's stretch (``image_state``), "" when none."""
+        return self.image_state(p)["warning"]
+
     def data_problems(self, views) -> list[tuple[str, str]]:
         """(workflow name, reason) of the workflows among ``views`` whose data cannot be computed, said before the run
         (PRINCIPLES: nothing runs without data): a session's folder not there, a frame that cannot be read, calibration

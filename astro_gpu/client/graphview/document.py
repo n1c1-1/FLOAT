@@ -136,6 +136,7 @@ def model_badges(m, b, kind, state) -> dict:
         out["nights"] = nt(n.sid) if nt is not None else ""
     elif kind == "image":
         out["broken"] = first(getattr(m, "image_problem", None))
+        out["warned"] = bool(first(getattr(m, "image_warning", None)))   # a stretched file read as linear (#174)
     elif kind == "combine":
         out["broken"] = first(getattr(m, "fusion_problem", None))
     if kind not in ("session", "post", "combine_layers") and not n.cut:

@@ -537,7 +537,14 @@ class Keys:
             # review 4.1: a FITS stored bottom up, read upside down before, is read top row first (no other key moves)
             from ..stages.image import bottom_up
             fid = fid + ["rows-up-1"] if path and bottom_up(path) else fid
-            return fid + ["stretched"] if src.get("stretched") else fid
+            if src.get("stretched"):
+                return fid + ["stretched"]
+            # issue #174: a stretch the header lists exactly is undone by the run (the key says so: the result is not the
+            # file's values as they are); an estimated undo is asked for; no other key moves
+            from ..stages.unstretch import header_exact
+            if src.get("unstretch") == "estimated":
+                return fid + ["unstretch-estimated"]
+            return fid + ["unstretch-header"] if path and header_exact(path) else fid
         if base(stage) in COMBINE and src:
             # each port's channel and the keys of what it reads: the workflow's Output or its starless image (its
             # Stars/background), and its plate solution; a change in a channel's workflow makes the combination Outdated
@@ -783,6 +790,7 @@ class Keys:
         if base(stage) == "image" and getattr(w, "source", None):
             v["path"] = _absolute(self.project, w.source["path"]) if w.source["path"] else ""
             v["stretched"] = bool(w.source.get("stretched"))
+            v["unstretch"] = str(w.source.get("unstretch") or "")
         if base(stage) in COMBINE and getattr(w, "source", None):
             store = Store(self.project.root) if self.project.root is not None else None
 

@@ -102,10 +102,13 @@ def test_the_placement_rules():
     # an image block before the stack: what to do, said (GUI exploration 8.5)
     e = wfl.place_problem(g, "frames", "denoise", 2)
     assert e is not None and e.template == wfl.WHY_STACK_FIRST
-    # Denoise needs the half-stacks of a stack: not on an image file
+    # Deconvolution needs the half-stacks of a stack: not on an image file; Denoise takes a single image (issue #174),
+    # but not a stretched one
     img = [node("astrometry"), node("output")]
-    e = wfl.palette_problem(img, "image", "denoise")
+    e = wfl.palette_problem(img, "image", "deconv")
     assert e is not None and e.template == wfl.WHY_HALVES
+    assert wfl.palette_problem(img, "image", "denoise") is None
+    assert wfl.palette_problem(img, "stretched", "denoise") is not None
     assert wfl.palette_problem(img, "image", "stars") is None                              # no Denoise there (#55)
     assert wfl.places(img, "image", "gradient") == [0, 1, 2]
     # removing: Stacking makes the image the next blocks take; Astrometry is needed by Color; Output always there

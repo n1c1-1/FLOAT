@@ -782,8 +782,13 @@ def check_source(source: Any, where: str = "source") -> dict[str, Any] | None:
     # path "": an Image block placed from the palette, its file still to choose (it is not run)
     if not isinstance(source, dict) or not isinstance(source.get("path"), str):
         raise ValueError(f"{where}: an image source is {{'path': its file, 'stretched': false}}, not {source!r}")
-    if set(source) - {"path", "stretched"}:
-        raise ValueError(f"{where}: unknown keys of an image source: {sorted(set(source) - {'path', 'stretched'})}")
+    if set(source) - {"path", "stretched", "unstretch"}:
+        raise ValueError(f"{where}: unknown keys of an image source: "
+                         f"{sorted(set(source) - {'path', 'stretched', 'unstretch'})}")
+    # issue #174: "unstretch" is the estimated undo of a stretch (the exact one, from the file's header, is automatic and
+    # has no setting); only for an image read as linear
+    if source.get("unstretch") not in (None, "estimated") or (source.get("unstretch") and source.get("stretched")):
+        raise ValueError(f"{where}: 'unstretch' is 'estimated' on a linear image, not {source.get('unstretch')!r}")
     return source
 
 

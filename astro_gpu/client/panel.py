@@ -423,6 +423,8 @@ class MethodCard(QFrame):
         v.addWidget(label(_(m["what"]), "small", wrap=True))
         if why:
             v.addWidget(label(why, "warn", wrap=True))
+            if not ok:
+                self.setToolTip(why)                    # greyed: its reason on hover too
 
     def mousePressEvent(self, e):                       # noqa: N802 - Qt's name
         if self.ok:
@@ -1092,9 +1094,31 @@ class Panel(QWidget):
         row.addStretch(1)
         self.bv.addLayout(row)
         self.bv.addSpacing(6)
+        st = s.image_state(p) if path else {"warning": "", "estimate_off": "", "estimated": False}
+        if st["warning"]:                                   # issue #174: said, never refused
+            self.bv.addWidget(label(st["warning"], "warn", wrap=True))
+        if path and not stretched:
+            self.bv.addWidget(self.group_title(_("Undo stretch")))
+            row = QHBoxLayout()
+            for value, text, tip in (("", _("None"), _("Read the image as it is")),
+                                     ("estimated", _("Estimated"),
+                                      _("Bring the stretch back to linear by an estimated inverse: the levels come back "
+                                        "linear up to an offset and a scale"))):
+                k = QPushButton(text)
+                k.setCheckable(True)
+                k.setObjectName("face")
+                k.setChecked(bool(value) == st["estimated"])
+                off = bool(value) and bool(st["estimate_off"])
+                k.setEnabled(not off)
+                k.setToolTip(st["estimate_off"] if off else tip)
+                k.clicked.connect(lambda _c=False, v=value: s.set_image_file(p, unstretch=v))
+                row.addWidget(k)
+            row.addStretch(1)
+            self.bv.addLayout(row)
+            self.bv.addSpacing(6)
         if not stretched:
-            self.bv.addWidget(label(_("The blocks after it read it as a stack. Denoise needs the two half-stacks of a "
-                                      "stack: it is not offered here."), "small", wrap=True))
+            self.bv.addWidget(label(_("The blocks after it read it as a stack. Denoise takes it as a single image: "
+                                      "Pretrained only, its noise measured on the image."), "small", wrap=True))
         self.bv.addStretch(1)
 
     def _choose_image(self, p):
@@ -2004,6 +2028,10 @@ class Panel(QWidget):
                 why = _("Needs a GPU (≈ {t} on the CPU).").format(t=t)
                 if on:
                     why = _("Computed earlier on a GPU; running it again here takes ≈ {t}.").format(t=t)
+            if k == "debruitage" and m["key"] == "affine" and self._single_image(p):
+                # issue #174: a single image has no half-stacks to adapt on: greyed, the reason on hover
+                from ..stages.denoise import WHY_NO_ADAPTED
+                ok, why = False, _(WHY_NO_ADAPTED)
             if k == "synth" and m["key"] == "instrument" and not on and hasattr(s, "state_info") and \
                     s.state_info(p, "astrometry") is None:      # the night test pass: chosen, it failed in 1 s
                 ok, why = False, _("Needs the image's scale: place the Astrometry block in this workflow.")
@@ -2016,6 +2044,12 @@ class Panel(QWidget):
                 card.clicked.connect(lambda mk=m["key"], nm=m["name"], sh=m["short"]: self.propose_opt(
                     opt, method_value(k, mk), self._method_words(k, applied, nm), _(sh), same=mk == applied))
             self.bv.addWidget(card)
+
+    def _single_image(self, p) -> bool:
+        """Whether the workflow starts from an image file read as linear: its stack has no half-stacks."""
+        from ..core.project2 import is_image, is_stretched
+        w = self.s.p.workflow(p.pid)
+        return is_image(w) and not is_stretched(w)
 
     @staticmethod
     def _method_words(k, applied, name) -> str:

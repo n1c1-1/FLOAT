@@ -644,5 +644,6 @@
  "sum of the values at each pixel, no rejection": "somme des valeurs en chaque pixel, sans rejet",
  "No darks: the master bias (or the camera's black level) stands for the master dark; the hot pixels are found by the bad pixel map instead.": "Pas de darks : le master offset (ou le niveau de noir de l'appareil) tient lieu de master dark ; les pixels chauds sont trouvés par la carte des pixels défectueux.",
  "No flats: vignetting and dust are not corrected.": "Pas de flats : le vignettage et les poussières ne sont pas corrigés.",
- "More than 5 % of the pixels are excluded as defective (Excluded pixels): check the darks, or raise the Hot pixel threshold.": "Plus de 5 % des pixels sont exclus comme défectueux (Pixels exclus) : vérifiez les darks, ou montez le Seuil pixels chauds."
+ "More than 5 % of the pixels are excluded as defective (Excluded pixels): check the darks, or raise the Hot pixel threshold.": "Plus de 5 % des pixels sont exclus comme défectueux (Pixels exclus) : vérifiez les darks, ou montez le Seuil pixels chauds.",
+ "Adapted learns the noise from two half-stacks: a single image has none. Pretrained measures the noise on the image itself.": "Adapté apprend le bruit à partir de deux demi-empilements : une image seule n'en a pas. Pré-entraîné mesure le bruit sur l'image elle-même."
 }
