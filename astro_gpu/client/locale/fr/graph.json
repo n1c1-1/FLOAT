@@ -638,5 +638,8 @@
  "A stretch of a colour image does not write its colour model in the header: {line}": "L'étirement d'une image couleur n'écrit pas son modèle de couleur dans l'en-tête : {line}",
  "A step after the stretch cannot be undone: {line}": "Une étape après l'étirement ne peut pas être défaite : {line}",
  "The stretch clipped the sky itself (half of the image is at its limit): its level cannot be brought back": "L'étirement a écrêté le ciel lui-même (la moitié de l'image est à sa limite) : son niveau ne peut pas être retrouvé",
- "Undo stretch reset on “{name}”: a new image is read as it is": "Défaire étirement remis à zéro sur « {name} » : une nouvelle image est lue telle quelle"
+ "Undo stretch reset on “{name}”: a new image is read as it is": "Défaire étirement remis à zéro sur « {name} » : une nouvelle image est lue telle quelle",
+ "Stretch undone (exact, from the header)": "Étirement défait (exact, d'après l'en-tête)",
+ "The header lists the stretch exactly: it was undone from these lines:": "L'en-tête liste l'étirement exactement : il a été défait d'après ces lignes :",
+ "The image as the blocks after it read it: linear when its stretch was undone, in the display's automatic stretch.": "L'image telle que les blocs suivants la lisent : linéaire quand son étirement a été défait, avec l'étirement automatique de l'affichage."
 }

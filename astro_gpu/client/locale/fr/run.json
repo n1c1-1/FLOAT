@@ -355,5 +355,10 @@
  "denoising, then the network": "débruitage, puis le réseau",
  "drawing the stars": "tracé des étoiles",
  "the scratch folder keeps {0} GB of calibrated frames for the next run: {1}": "le dossier de travail garde {0} Go d'images calibrées pour le prochain calcul : {1}",
- "the result of the {0} block was computed with an earlier version ({1} -> {2}), which this version may no longer read: recompute it with “Recompute (current version)” on that block": "le résultat du bloc {0} a été calculé avec une version antérieure ({1} -> {2}), que cette version ne sait peut-être plus lire : recalculez-le avec « Recalculer (version actuelle) » sur ce bloc"
+ "the result of the {0} block was computed with an earlier version ({1} -> {2}), which this version may no longer read: recompute it with “Recompute (current version)” on that block": "le résultat du bloc {0} a été calculé avec une version antérieure ({1} -> {2}), que cette version ne sait peut-être plus lire : recalculez-le avec « Recalculer (version actuelle) » sur ce bloc",
+ "image {0}: {1} x {2}": "image {0} : {1} x {2}",
+ "stretch undone from the header ({0} step(s); {1} pixels clipped by the stretch stay as they are)": "étirement défait d'après l'en-tête ({0} étape(s) ; {1} pixels écrêtés par l'étirement restent tels quels)",
+ "stretch undone by estimate (mid-tones m = {0})": "étirement défait par estimation (tons moyens m = {0})",
+ "a single image: the noise is measured on the image, the dither check is skipped (it reads two half-stacks)": "une image seule : le bruit est mesuré sur l'image, le contrôle du dither est sauté (il lit deux demi-empilements)",
+ "denoising the image": "débruitage de l'image"
 }

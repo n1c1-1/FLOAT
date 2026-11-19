@@ -2493,12 +2493,15 @@ class GraphEditing:
 
     def _follow_image_name(self, p, old_path: str, new_path: str):
         """The workflow of an Image takes its file's name when it still bears the name its first file gave it (the
-        file's name, numbered or not): a name typed by the user stays. The palette's "for ..." and the group title read
-        it."""
+        file's name, numbered or not), or its default one when it had no file ("Image 2"): a name typed by the user
+        stays. The palette's "for ..." and the group title read it."""
         import re
         name = self.p.workflow(p.pid).name
         old = Path(old_path).stem if old_path else ""
-        if not old or not (name == old or re.fullmatch(re.escape(old) + r" \d+", name)):
+        if old:
+            if not (name == old or re.fullmatch(re.escape(old) + r" \d+", name)):
+                return
+        elif not re.fullmatch(r"Image( \d+)?", name):
             return
         new = self.unique_name(Path(new_path).stem)
         if new != name:
