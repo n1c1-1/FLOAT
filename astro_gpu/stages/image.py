@@ -209,7 +209,7 @@ class ImageSource(Stage):
         ctx.metric("width", W)
         ctx.metric("height", H)
         ctx.metric("factor", factor)
-        ctx.log(f"image {Path(p.path).name}: {W} x {H}" + (" (values x 65535)" if factor != 1.0 else ""))
+        ctx.log(f"image {Path(p.path).name}: {W} x {H}")
         v = np.moveaxis(a, 0, -1)
         lo, hi = np.percentile(v, 1), np.percentile(v, 99.5)
         ctx.preview("image", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
@@ -235,8 +235,8 @@ class ImageSource(Stage):
         y = a.astype(np.float64) / scale
         lin = U.undo(y, an.ops, an.mono)
         ctx.metric("unstretch", "header")
-        ctx.log(f"stretch undone from the header ({len(an.ops)} step{'s' if len(an.ops) != 1 else ''}; "
-                f"{U.clipped(y)} pixels the stretch clipped stay as they are)")
+        ctx.log(f"stretch undone from the header ({len(an.ops)} step(s); "
+                f"{U.clipped(y)} pixels clipped by the stretch stay as they are)")
         return np.nan_to_num(lin, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
     def stretched(self, ctx: Context, p: ImageParams, a: np.ndarray) -> None:

@@ -1094,10 +1094,16 @@ class Panel(QWidget):
         row.addStretch(1)
         self.bv.addLayout(row)
         self.bv.addSpacing(6)
-        st = s.image_state(p) if path else {"warning": "", "estimate_off": "", "estimated": False}
+        st = s.image_state(p) if path else {"warning": "", "estimate_off": "", "estimated": False, "exact": False, "lines": ""}
         if st["warning"]:                                   # issue #174: said, never refused
             self.bv.addWidget(label(st["warning"], "warn", wrap=True))
-        if path and not stretched:
+        if path and not stretched and st.get("exact"):       # issue #174: the fact, stated (no choice to make)
+            self.bv.addWidget(self.group_title(_("Undo stretch")))
+            done = label(_("Stretch undone (exact, from the header)"), "small", wrap=True)
+            done.setToolTip(_("The header lists the stretch exactly: it was undone from these lines:") + "\n" + st["lines"])
+            self.bv.addWidget(done)
+            self.bv.addSpacing(6)
+        elif path and not stretched:
             self.bv.addWidget(self.group_title(_("Undo stretch")))
             row = QHBoxLayout()
             for value, text, tip in (("", _("None"), _("Read the image as it is")),

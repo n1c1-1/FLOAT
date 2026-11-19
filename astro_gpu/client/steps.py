@@ -116,6 +116,8 @@ DENOISE_NOTE = ("Before (what the block reads: the stack with the blocks before 
                 "the picture) and after (denoised), with the same stretch on both. Drag the divider.")
 ALIGNED_NOTE = ("The image brought onto the grid of its reference: the size and framing of the reference, what overflows is "
               "cut. Compare it with the stack it comes from.")
+IMAGE_NOTE = ("The image as the blocks after it read it: linear when its stretch was undone, in the display's automatic "
+              "stretch.")
 STACK_NOTE = ("The stack output in the camera's colours, before colour calibration: a colour cast it shows is the "
               "camera's own, the Color block takes it off.")
 STACK_MONO_NOTE = "The stack of one filter: one plane, in the sensor's own levels, before any colour is given."
@@ -292,6 +294,13 @@ class Steps(QObject):
         if k == "align_on":
             return [V("aligned", "Aligned image", "array", "align_on", "drz_full", True, True, camera=True,
                       compare=("raw_stack",), note=ALIGNED_NOTE)]
+        if k == "image":
+            # issue #174: the block's output, the image as the blocks after it read it (an undone stretch: the linear
+            # image, the only way to check the undo), shown with the usual automatic stretch
+            src = getattr(p, "source", None)
+            if isinstance(src, dict) and src.get("stretched"):
+                return []                         # a stretched image goes to Post as it is: nothing to stretch to show
+            return [V("image", "Image", "array", "image", "drz_full", True, True, camera=False, note=IMAGE_NOTE)]
         if k == "calibration":
             out = [V("masters", "Masters", "masters", "calibrate")]
             counts = {"darks": 0, "flats": 0, "bias": 0, "flat_darks": 0}

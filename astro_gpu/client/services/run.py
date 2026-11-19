@@ -223,7 +223,7 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         (r"^XP spectra: (\d+) of (\d+)$", "XP spectra: {0} of {1}", ()),
         (r"^(Gaia stars|Gaia bright stars): tile (\d+) of (\d+)$", "{0}: tile {1} of {2}", (0,)),
         # data set 20: the Denoise bar moves with the network's tiles (a 62 Mpx stack has 3000 of them)
-        (r"^(denoising the half-stacks|denoising the full stack): tile (\d+) of (\d+)$", "{0}: tile {1} of {2}", (0,)),
+        (r"^(denoising the half-stacks|denoising the full stack|denoising the image): tile (\d+) of (\d+)$", "{0}: tile {1} of {2}", (0,)),
         (r"^(Gaia stars|Gaia bright stars): (\d+) sky tiles downloaded in ([\d.]+) min$",
          "{0}: {1} sky tiles downloaded in {2} min", (0,)),
         (r"^refining star positions \(pass (\d+)\)$", "refining star positions (pass {0})", ()),
@@ -482,6 +482,11 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
          "Catalogs & astrometry", ()),
         (r"^only (\d+) stars with spectra in this field \(minimum (\d+)\)$",
          "only {0} stars with spectra in this field (minimum {1})", ()),
+        # issue #174: an Image block's lines
+        (r"^image (.+): (\d+) x (\d+)$", "image {0}: {1} x {2}", ()),
+        (r"^stretch undone from the header \((\d+) step\(s\); (\d+) pixels clipped by the stretch stay as they are\)$",
+         "stretch undone from the header ({0} step(s); {1} pixels clipped by the stretch stay as they are)", ()),
+        (r"^stretch undone by estimate \(mid-tones m = (.+)\)$", "stretch undone by estimate (mid-tones m = {0})", ()),
         (r"^background noise divided by ([\d.]+)$", "background noise divided by {0}", ()),
         (r"^resuming the training at step (\d+)/(\d+)$", "resuming the training at step {0}/{1}", ()),
         (r"^training done in ([\d.]+) min, final loss ([\d.]+)$", "training done in {0} min, final loss {1}", ()),

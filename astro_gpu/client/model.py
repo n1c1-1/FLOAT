@@ -2332,10 +2332,11 @@ class _ProjectBase(QObject):
 
     def image_state(self, p) -> dict:
         """What the Image block of workflow ``p`` says of its file's stretch (issue #174): {"warning": text (translated, ""
-        when none), "estimate_off": why the estimated inverse is not offered ("" when it is), "estimated": it is on}.
-        An exact undo from the header is automatic and silent: no warning. Read once per file state (stages/unstretch)."""
+        when none), "estimate_off": why the estimated inverse is not offered ("" when it is), "estimated": it is on, "exact": the stretch is
+        undone exactly from the header, "lines": its lines (the hover)}. An exact undo from the header is automatic and
+        says no warning, only its state. Read once per file state (stages/unstretch)."""
         src = getattr(p, "source", None)
-        out = {"warning": "", "estimate_off": "", "estimated": False}
+        out = {"warning": "", "estimate_off": "", "estimated": False, "exact": False, "lines": ""}
         if not isinstance(src, dict) or "fusion" in src or not src.get("path"):
             return out
         from ..stages.image import image_problem
@@ -2358,6 +2359,8 @@ class _ProjectBase(QObject):
             return out
         if an.exact:
             out["estimate_off"] = _("The header lists the stretch exactly: it is undone automatically")
+            out["exact"] = True
+            out["lines"] = "\n".join(o.line for o in an.ops)
             return out
         if not an.stretched:
             out["estimate_off"] = _("This image does not look stretched")
