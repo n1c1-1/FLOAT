@@ -247,3 +247,51 @@ def test_the_shown_picture_is_not_the_compared_one_and_both_are_on_one_canvas(po
     assert req.plain and req.canvas is v._canvas                              # the shown version's grid
     assert shown(v) is not None and v.before.img1.shape == shown(v).shape
     v.worker.request = real
+
+
+def _best_shift(a, b, r=3):
+    """The (dy, dx) within +-r that makes grey ``a`` closest to ``b`` (0, 0 when they are on one grid)."""
+    import numpy as np
+    a = a.astype(np.float32).mean(-1)
+    b = b.astype(np.float32).mean(-1)
+    h, w = a.shape
+    best = None
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            d = np.abs(a[r + dy:h - r + dy, r + dx:w - r + dx] - b[r:h - r, r:w - r]).mean()
+            if best is None or d < best[0]:
+                best = (d, (dy, dx))
+    return best[1], best[0]
+
+
+@pytest.mark.parametrize("crop", [False, True])
+def test_two_versions_differing_by_a_slider_are_on_one_grid_across_the_divider(post, crop):
+    """Both sides show the same canvas positions: the compared picture, rendered for the shown version's canvas, lines
+    up with the shown one pixel for pixel (a star at the divider continues across it), at the screen's level, zoomed in
+    and panned, and with a crop on one version."""
+    v = post.view
+    first, second = _two_versions(post)
+    second["layers"] = copy.deepcopy(first["layers"])
+    for lay in second["layers"]:                                              # differing by one slider value only
+        if lay.get("kind") == "workflow" and "sky" in lay.get("sliders", {}):
+            lay["sliders"]["sky"] = lay["sliders"]["sky"] + 0.4
+            break
+    if crop:
+        second["crop"] = [40, 30, 400, 300]
+    v._post_changed(None)
+    v.b_cmp.setChecked(True)
+    assert post.settle()
+    assert v.before.img1.shape == v.src.img1.shape
+    shift, diff = _best_shift(v.before.img1, v.src.img1)
+    assert shift == (0, 0) and diff < 12, (shift, diff)
+    v.viewer.zoom_to(1.5, 250, 180)
+    v.viewer.pan_by(-40, 25)
+    assert post.settle()
+    box = v.visible_box()
+    x0, y0, x1, y1 = box
+    a = v.before.region(0, x0, y0, x1, y1)
+    b = v.src.region(0, x0, y0, x1, y1)
+    shift, diff = _best_shift(a, b)
+    assert shift == (0, 0) and diff < 12, (shift, diff)
+    # the picture drawn: the columns on each side of the divider are the same canvas columns
+    assert v.viewer.compare.size() == v.viewer.source.size()
