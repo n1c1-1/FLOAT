@@ -46,8 +46,11 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 BANQUE = Path("F:/astro_banque")
-WORK = Path("F:/astro_essais/stars_dataset_nb_work")
+WORK = Path("F:/astro_essais/_A_SUPPRIMER/stars_dataset_nb_work")
 OUT = Path("F:/astro_essais/stars_dataset/_revue_nb")
+OUT2 = Path("F:/astro_essais/stars_dataset/_revue_combi")       # the assembled pairs with their target (command combi)
+DECONV = OUT2 / "deconv"
+V2 = Path("F:/astro_essais/stars_dataset_v2")
 OFFSET, SOFT = 3.0, 3.0                      # the review stretch of tools/bench/stars_dataset.py
 #: the projects, nothing guessed: {key: (folder, the filters, the combination's type or None)}
 FIELDS = {
@@ -56,7 +59,19 @@ FIELDS = {
     "58": ("58_mono_newton_asi1600mm_ic443_hoo_rgb", ("Ha", "OIII"), "ho"),
     "62": ("62_mono_lco04m_sq38_ngc3372_hau", ("Ha", "OIII"), "ho"),
     "64": ("64_smart_seestar_s30_m16_dualband", (), None),
+    "26": ("26_mono_refractor_apogeef16m_toa150_m42_lrgb", ("R", "G", "B"), "rgb"),
+    "34": ("34_osc_refractor_asi2600mc_dualband_m8m20", (), None),
 }
+#: the assembled images of command ``combi``: {key: [(name, the combination workflow's name, its type, its filters)]}.
+#: An (L)RGB combination composes lightness and colour (not linear: no frozen coefficients): its RGB part is used, the
+#: L left out (in the scratch copy, the LRGB workflow becomes a plain RGB fusion of its three colour inputs).
+COMBIS = {
+    "57": [("sho", "SHO Hubble", "sho", ("SII", "Ha", "OIII")), ("rgb", "LRGB", "rgb", ("R", "G", "B"))],
+    "58": [("hoo", "HOO", "ho", ("Ha", "OIII")), ("rgb", "RGB", "rgb", ("R", "G", "B"))],
+    "62": [("ho", "HOO", "ho", ("Ha", "OIII"))],
+    "26": [("rgb", "LRGB", "rgb", ("R", "G", "B"))],
+}
+OSC = ("34", "64")
 #: the stages before Gradient: never computed here
 BEFORE_GRADIENT = ("inventory", "calibrate", "register", "stack", "astrometry", "surveys", "align_on", "reference",
                    "image")
@@ -191,14 +206,17 @@ def device_check(device: str) -> str:
     return "cuda:0"
 
 
-def setup(key: str):
+def setup(key: str, patch=None):
     """The scratch project of a field, opened through the API with the overlay on."""
     name = FIELDS[key][0]
     src, dst = BANQUE / name, WORK / key
     dst.mkdir(parents=True, exist_ok=True)
-    shutil.copy(src / "project.astroproj", dst / "project.astroproj")
-    if (src / "state.json").is_file():
-        shutil.copy(src / "state.json", dst / "state.json")
+    if not (dst / "project.astroproj").is_file():           # (a scratch project already made stays: its results are kept)
+        shutil.copy(src / "project.astroproj", dst / "project.astroproj")
+        if (src / "state.json").is_file():
+            shutil.copy(src / "state.json", dst / "state.json")
+    if patch is not None:
+        patch(dst / "project.astroproj")
     os.environ["FLOAT_NB_SRC"], os.environ["FLOAT_NB_DST"] = str(src), str(dst)
     site = WORK / "_site"
     write_sitecustomize(site)
@@ -443,10 +461,168 @@ def do_field(key: str, device: str) -> dict:
     out["total_s"] = round(time.time() - t0, 1)
     return out
 
+# ---------------------------------------------------------------------------------------------- command combi
+def fresh(path: Path) -> Path:
+    """``path``, which must not exist: nothing is overwritten."""
+    if path.exists():
+        raise SystemExit(f"refused: {path} exists")
+    return path
+
+
+def save_triplet(name: str, items: dict, conv: dict, extra: dict, outdir: Path = OUT2) -> None:
+    """``items`` {suffix: (3, H, W) in noise sigmas, background 0}: <name>_<suffix>.tif and .npy in a folder <name>/, all
+    on the one stretch of the first item's maximum (the stretch of save_pair), recorded in stretch.json."""
+    import tifffile
+    outdir.mkdir(parents=True, exist_ok=True)
+    d = fresh(outdir / name)
+    d.mkdir()
+    first = next(iter(items.values()))
+    top = float(first.max())
+    st = np.arcsinh((top + OFFSET) / SOFT)
+    for suf, v in items.items():
+        np.save(d / f"{suf}.npy", v.astype(np.float32))
+        y = np.arcsinh(np.clip(v + OFFSET, 0, None) / SOFT) / st
+        tifffile.imwrite(fresh(outdir / f"{name}_{suf}.tif"), np.round(np.clip(y, 0, 1) * 65535).astype(np.uint16)
+                         .transpose(1, 2, 0), photometric="rgb")
+    meta = {"name": name, "shape": list(first.shape), "top": top, "offset": OFFSET, "soft": SOFT, "files": list(items),
+            "units": "noise sigmas of the Stars block's input of the assembled image, background 0",
+            "to_output_units": "v * unit + background (render_simple's linear image)", **conv, **extra}
+    (d / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+    sf = outdir / "stretch.json"
+    stretch = json.loads(sf.read_text()) if sf.exists() else {}
+    if name in stretch:
+        raise SystemExit(f"refused: {name} is in stretch.json")
+    stretch[name] = {"pair": name, "top": top, "offset": OFFSET, "soft": SOFT, "applies_to": list(items),
+                     "white_balance": None, "white_balanced": False}
+    sf.write_text(json.dumps(stretch, indent=1), encoding="utf-8")
+    log(f"{name}: {first.shape[2]}x{first.shape[1]} written ({', '.join(items)})")
+
+
+def disc_check(orig: np.ndarray, reseau: np.ndarray, cible: np.ndarray, valid: np.ndarray, n: int = 3,
+               radius: int = 60) -> dict:
+    """The disc around the brightest stars: ``reseau - cible`` (mean of the colours, noise sigmas) in a circle of
+    ``radius`` px around each of the ``n`` brightest stars (peaks of the original at least 2 radii apart and from the
+    border): the signed mean of the ring 5..radius px and of the core (under 5 px), and the sky's median of
+    |reseau - cible| (beyond 2 radii of the stars, valid pixels) for scale."""
+    from scipy import ndimage
+    m = orig.mean(0)
+    d = (reseau - cible).mean(0)
+    H, W = m.shape
+    mx = ndimage.maximum_filter(m, 31)
+    ys, xs = np.nonzero((m == mx) & (m > 0))
+    order = np.argsort(-m[ys, xs])
+    stars = []
+    for i in order[:20000]:
+        y, x = int(ys[i]), int(xs[i])
+        if not (radius <= y < H - radius and radius <= x < W - radius) or not valid[y, x]:
+            continue
+        if any((y - a) ** 2 + (x - b) ** 2 < (2 * radius) ** 2 for a, b, _ in stars):
+            continue
+        stars.append((y, x, float(m[y, x])))
+        if len(stars) == n:
+            break
+    out = {"stars": []}
+    yy, xx = np.ogrid[:H, :W]
+    far = valid.copy()
+    for y, x, v in stars:
+        r2 = (yy - y) ** 2 + (xx - x) ** 2
+        ring = (r2 >= 25) & (r2 <= radius ** 2) & valid
+        core = (r2 < 25) & valid
+        far &= ~(r2 <= (2 * radius) ** 2)
+        out["stars"].append({"x": x, "y": y, "peak_sigma": round(v, 1),
+                             "ring_mean": round(float(d[ring].mean()), 3),
+                             "ring_median": round(float(np.median(d[ring])), 3),
+                             "core_mean": round(float(d[core].mean()), 2)})
+    out["sky_median_abs"] = round(float(np.median(np.abs(d[far][::7]))), 3)
+    return out
+
+
+def patch_rgb_of(wname: str):
+    """A patch of the scratch project: the LRGB workflow ``wname`` becomes a plain RGB fusion of its colour inputs."""
+    def patch(path: Path) -> None:
+        assert os.path.normcase(str(path)).startswith(os.path.normcase(str(WORK))), path
+        d = json.loads(path.read_text(encoding="utf-8"))
+        for w in d["workflows"]:
+            f = (w.get("source") or {}).get("fusion")
+            if w["name"] == wname and f and f["type"] == "lrgb":
+                f["type"] = "rgb"
+                f["inputs"] = [i for i in f["inputs"] if i["role"] != "L"]
+        path.write_text(json.dumps(d, indent=1), encoding="utf-8")
+    return patch
+
+
+def do_combi(key: str, device: str) -> dict:
+    name = FIELDS[key][0]
+    t0 = time.time()
+    combos = COMBIS[key]
+    lrgb = [c[1] for c in combos if c[2] == "rgb" and c[1] == "LRGB"]
+    api, p, src, dst = setup(key, patch_rgb_of(lrgb[0]) if lrgb else None)
+    log(f"{name}: workflows {[(w.id, w.name, (w.source or {}).get('fusion', {}).get('type')) for w in p.workflows]}")
+    todo = []
+    for cname, wname, kind, filters in combos:
+        comb = next(w for w in p.workflows if w.name == wname and (w.source or {}).get("fusion", {}).get("type") == kind)
+        fw = {i["role"]: p.workflow(i["pid"]) for i in comb.source["fusion"]["inputs"]}
+        if tuple(fw) != tuple(filters):
+            raise SystemExit(f"{wname}: inputs {list(fw)}, expected {filters}")
+        for w in fw.values():
+            api.set_option(p, w.id, "stars", "neural")
+        api.set_option(p, comb.id, "stars", "neural")
+        todo.append((cname, comb, fw))
+    api.save(p)
+    wfs = []
+    for _, comb, fw in todo:
+        wfs += [w.id for w in fw.values() if w.id not in wfs] + [comb.id]
+    secs = run_to(api, p, wfs, "stars", device)
+    out = {"field": key, "run_s": round(secs, 1), "pairs": {}}
+    for cname, comb, fw in todo:
+        filt, starless = {}, {}
+        for r, w in fw.items():
+            lin, sl, prep, rdir, sdir = read_star_removal(api, p, w.id)
+            filt[r], starless[r] = lin, sl
+        lin, sl, prep, rdir, sdir = read_star_removal(api, p, comb.id)
+        stage = next(s for s in COMBINES if api.stage_outputs(p, comb.id, s) is not None)
+        comb_dir = Path(api.stage_outputs(p, comb.id, stage).dir)
+        co = coefficients(p, comb, stage, comb_dir)
+        valid = np.load(comb_dir / "drz_weight.npy")[0] > 0
+        chk = check(p, comb, co, comb_dir, filt, valid, starless)
+        target = apply_coefficients(co, starless, valid)       # the per-filter starless images, the frozen formula
+        target = np.where(valid[None], target, lin)            # (outside the fusion's field: the image's own)
+        a, b, conv = pair_arrays(lin, sl, prep)
+        _, c, _ = pair_arrays(lin, target, prep)
+        pair = f"{key}_{cname}"
+        disc = disc_check(a, b, c, valid)
+        note = "cible = each filter's network starless image, fused by the frozen coefficients of the fusion"
+        if cname == "rgb" and comb.name == "LRGB":
+            note += "; the (L)RGB combination's RGB part, without L"
+        save_triplet(pair, {"original": a, "starless_reseau": b, "cible": c}, conv,
+                     {"kind": "assembled", "workflow": comb.name, "source": name, "filters": list(fw), "check": chk,
+                      "disc_check": disc, "coefficients": co, "note": note})
+        log(f"{pair}: disc check {disc}; coefficient check {chk}")
+        out["pairs"][pair] = disc
+    out["total_s"] = round(time.time() - t0, 1)
+    return out
+
+
+def do_osc(key: str, device: str) -> dict:
+    """A one-shot-colour field: <key>_original.tif and <key>_starless_reseau.tif, no target."""
+    name = FIELDS[key][0]
+    t0 = time.time()
+    api, p, src, dst = setup(key)
+    log(f"{name}: workflows {[(w.id, w.name, (w.source or {}).get('fusion', {}).get('type')) for w in p.workflows]}")
+    one = next(w for w in p.workflows if not (w.source or {}).get("fusion"))
+    api.set_option(p, one.id, "stars", "neural")
+    api.save(p)
+    secs = run_to(api, p, [one.id], "stars", device)
+    lin, sl, prep, rdir, sdir = read_star_removal(api, p, one.id)
+    a, b, conv = pair_arrays(lin, sl, prep)
+    save_triplet(key, {"original": a, "starless_reseau": b}, conv,
+                 {"kind": "one-shot colour", "workflow": one.name, "source": name})
+    return {"field": key, "run_s": round(secs, 1), "total_s": round(time.time() - t0, 1)}
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=("run",))
+    ap.add_argument("cmd", choices=("run", "combi", "osc", "deconv"))
     ap.add_argument("--fields", default="62")
     ap.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
     a = ap.parse_args(argv)
@@ -454,13 +630,16 @@ def main(argv=None) -> int:
     os.environ.setdefault("ASTRO_GPU_HOME", str(WORK / "_home"))
     dev = device_check(a.device)
     keys = a.fields.split(",")
-    if len(keys) > 1:                                       # the overlay is made once per process: one field each
+    if len(keys) > 1 and a.cmd != "deconv":                                       # the overlay is made once per process: one field each
         import subprocess
         rc = 0
         for key in keys:
-            rc |= subprocess.run([sys.executable, __file__, "run", "--fields", key, "--device", a.device]).returncode
+            rc |= subprocess.run([sys.executable, __file__, a.cmd, "--fields", key, "--device", a.device]).returncode
         return rc
-    log(f"{keys[0]}: {do_field(keys[0], dev)}")
+    if a.cmd == "deconv":
+        return deconv_check(dev)
+    one = {"run": do_field, "combi": do_combi, "osc": do_osc}[a.cmd]
+    log(f"{keys[0]}: {one(keys[0], dev)}")
     return 0
 
 
