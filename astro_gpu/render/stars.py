@@ -16,7 +16,8 @@ stretching them less is the star reduction: no reduction is needed on the recomb
   reconstruction, L. Vincent 1993, so that the wider stars stay exactly as they were; on the stars alone, so the
   nebula's texture is never touched); their size by a round grey erosion (smaller) or dilation (larger), as the reference image editor's
   Minimum and Maximum filters with Preserve roundness (an octagon: a cross and a square in turn, the usual
-  approximation of a disc), never a square; smaller through a star mask (``star_mask``: the stars standing above
+  approximation of a disc), never a square; smaller on their light wider than the erosion only (the faint stars and
+  the narrow light added back as they were: a faint star keeps its shape) and through a star mask (``star_mask``: the stars standing above
   their local background's noise), as those tutorials select the stars first, so that the grain between the stars of
   a dense field is not eroded into filaments; their colour by a saturation around the luminance;
 * recombined: Screen 1 - (1 - a)(1 - b), Linear dodge (add) a + b (clipped), or Lighten max(a, b).
@@ -418,32 +419,37 @@ def resize_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
     if abs(r) < 1e-3:
         return y
     n, t = int(abs(r)), abs(r) - int(abs(r))
-    lo = _morph(y, n, r > 0)
-    _go_on(check)
-    out = lo if t < 1e-3 else (1 - t) * lo + t * _morph(y, n + 1, r > 0)
     if r > 0:
-        return out
+        lo = _morph(y, n, True)
+        _go_on(check)
+        return lo if t < 1e-3 else (1 - t) * lo + t * _morph(y, n + 1, True)
+    # only the light wider than the erosion is eroded (``wide_light``), the narrower light (the faint stars, the beads of a
+    # chain of touching ones, the top of a wide star) is added back as it was: an erosion of a faint star's light, or a
+    # weight that erodes its flanks and spares its core (issue #169's ratio of the opening, 1 on a faint star's flanks and
+    # low on its core), thins it into a line, a worm (#174, M27); its light on top of the eroded wide light keeps its shape
+    w = wide_light(y, abs(r), check)
+    lo = _morph(w, n, False)
+    _go_on(check)
+    out = lo if t < 1e-3 else (1 - t) * lo + t * _morph(w, n + 1, False)
     _go_on(check)
     # shrunk through a star mask, as the published star reductions do (the reference image editor: the Minimum filter through a
     # selection of the stars; the reference processing suite: MorphologicalTransformation through a star mask): an erosion of the faint
-    # background between the stars draws a web of filaments on a dense field (issue #18). Only where a star is wider than the
-    # erosion takes away (``wide_stars``): a star about that wide would lose its core and leave a ring or a one-pixel line, a
-    # worm, and where faint stars touch the minimum along the chain would stay as an arc (issue #169)
-    return y + (out - y) * star_mask(y, n + 1, check) * wide_stars(y, abs(r), check)
+    # background between the stars draws a web of filaments on a dense field (issue #18)
+    return y + (out - w) * star_mask(y, n + 1, check)
 
 
-def wide_stars(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
-    """How much of each place's star light is wider than a disc of r + 1 pixels (h, w in 0..1): the grey opening of the
-    luminance by that disc (a granulometry, Serra 1982 and Vincent 1994) over the luminance. The opening keeps what
-    contains the disc and removes what does not, place by place: a wide star stays whole, a faint star and the narrow
-    beads of a chain of touching ones, attached to a wider star or not, go (a reconstruction would regrow the whole
-    connected chain from one wide part). The disc is the reduction's pixels plus the two a star needs to stay sampled
-    across (Nyquist-Shannon): what is left of a star is never a one-pixel line."""
-    L = ops.luminance(y)[None]
+def wide_light(y: torch.Tensor, r: float, check=None) -> torch.Tensor:
+    """The stars' light wider than a disc of r + 1 pixels (3, h, w): the grey opening of each channel by that disc, the
+    first term of the image's decomposition into the opening and the top-hat (y = opening + top-hat; Meyer 1979, Serra
+    1982: a granulometry). The opening keeps what contains the disc and removes what does not, place by place, and
+    never adds light: a wide star stays whole but for its top, a faint star and the narrow beads of a chain of touching
+    ones, attached to a wider star or not, are all in the top-hat (a reconstruction would regrow the whole connected
+    chain from one wide part). The disc is the reduction's pixels plus the two a star needs to stay sampled across
+    (Nyquist-Shannon): what is left of a star is never a one-pixel line."""
     rho = max(1, int(round(r + 1.0)))
-    wide = _morph(_morph(L, rho, False), rho, True)
+    wide = _morph(_morph(y, rho, False), rho, True)
     _go_on(check)
-    return (wide / L.clamp_min(1e-6)).clamp(0, 1)[0]
+    return torch.minimum(wide, y)
 
 
 #: a star of the mask stands this many local noise units above its local background (the usual detection threshold)

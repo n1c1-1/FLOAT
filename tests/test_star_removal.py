@@ -316,7 +316,7 @@ def test_the_small_stars_go_and_the_halo_of_a_large_one_keeps_no_edge():
 
 
 def test_the_smallest_size_leaves_faint_stars_and_chains_as_they_are():
-    """Issue #169: the reduction erodes only the stars wider than what it takes away (``wide_stars``, the grey
+    """Issue #169: the reduction erodes only the stars wider than what it takes away (``wide_light``, the grey
     opening, place by place): a faint star and a chain of touching faint stars are the same to the pixel at the smallest size
     (no worm, no arc), a large star is narrower."""
     yy, xx = torch.meshgrid(torch.arange(120.0), torch.arange(120.0), indexing="ij")
@@ -334,3 +334,22 @@ def test_the_smallest_size_leaves_faint_stars_and_chains_as_they_are():
     #                                                                            narrow beads stay (not regrown from it)
     width = lambda im: int((im[0, 70:110, 70:120].max(0).values > 0.5 * im[0, 90, 80]).sum())    # width at half height
     assert width(out) < width(y) - 1, (width(out), width(y))                   # the large star shrinks
+
+
+def test_the_smallest_size_leaves_a_faint_star_on_a_wide_one_as_it_was():
+    """#174 (M27, a dense field): a faint star on the light of a wider one (its wing, the glow of a crowded field)
+    is not thinned by the reduction: only the light wider than the erosion is eroded, the faint star's own light goes
+    back on top as it was. A weight of the opening over the light (1 on the faint star's flanks, low on its core)
+    eroded its flanks and spared its core: a fifth of its light lost and the rest a thinner core, faint stars drawn
+    as broken chains."""
+    yy, xx = torch.meshgrid(torch.arange(80.0), torch.arange(80.0), indexing="ij")
+
+    def star(cy, cx, s, a):
+        return a * torch.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * s * s))
+
+    wide = star(40, 40, 8.0, 0.5)
+    faint = star(40, 50, 1.0, 0.15) + star(41.5, 51.5, 1.0, 0.12)            # a faint pair of bumps on its wing
+    own = (resize_stars((wide + faint).repeat(3, 1, 1), -1.0) - resize_stars(wide.repeat(3, 1, 1), -1.0))[0]
+    win = (slice(34, 48), slice(44, 58))
+    assert float(own[win].sum() / faint[win].sum()) > 0.97                   # its light kept (the old weight: 0.80)
+    assert torch.equal(resize_stars(wide.repeat(3, 1, 1), 0.0), wide.repeat(3, 1, 1))
