@@ -645,5 +645,7 @@
  "Undo stretch reset on “{name}”: a new image is read as it is": "Défaire étirement remis à zéro sur « {name} » : une nouvelle image est lue telle quelle",
  "Stretch undone (exact, from the header)": "Étirement défait (exact, d'après l'en-tête)",
  "The header lists the stretch exactly: it was undone from these lines:": "L'en-tête liste l'étirement exactement : il a été défait d'après ces lignes :",
- "The image as the blocks after it read it: linear when its stretch was undone, in the display's automatic stretch.": "L'image telle que les blocs suivants la lisent : linéaire quand son étirement a été défait, avec l'étirement automatique de l'affichage."
+ "The image as the blocks after it read it: linear when its stretch was undone, in the display's automatic stretch.": "L'image telle que les blocs suivants la lisent : linéaire quand son étirement a été défait, avec l'étirement automatique de l'affichage.",
+  "{n} block in an earlier version": "{n} bloc en version antérieure",
+  "{n} blocks in an earlier version": "{n} blocs en version antérieure"
 }

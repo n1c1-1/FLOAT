@@ -497,15 +497,30 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         (r"^sky fitted on (\d+) of (\d+) sky samples \((\d+) px blocks\); gradient ([\d.]+) on a sky of ([\d.]+) \((.*)\)$",
          "sky fitted on {0} of {1} sky samples ({2} px blocks); gradient {3} on a sky of {4} ({5})", ()),
         (r"^simple output (\d+) x (\d+) from (.+), useful frame x (\d+)-(\d+), y (\d+)-(\d+); sky: (.*)$",
-         "simple output {0} x {1} from {2}, useful frame x {3}-{4}, y {5}-{6}; sky: {7}", ()),
+         "simple output {0} x {1} from {2}, useful frame x {3}-{4}, y {5}-{6}; sky: {7}", (7,)),
     ]]
 
 
 def engine_text(msg: str) -> str:
-    """A progress message of a stage, in the language of the client (decimals with the language's mark)."""
+    """A progress message or a log line of a stage, in the language of the client (decimals with the language's
+    mark): the fixed sentences by the catalogue, the ones with numbers by ``PATTERNS`` or by the catalogue's lines with
+    fields (``locale/fr/log.json``)."""
     msg = (msg or "").strip()
     if is_raw_error(msg):                         # a program error ("OSError: …"): never shown as it is (exploration 2)
         return plain_error(msg)
+    return _pattern_text(msg) or _advice_text(msg) or _logline_text(msg) or _value_text(msg) or _(msg)
+
+
+def _value_text(msg: str) -> str:
+    """The French of a word a stage stores as a metric's value ("channel medians"), or '' when it is none."""
+    from ... import texts
+    from ..i18n import language
+    out = texts._text_value(msg, language())
+    return out if out != msg else ""
+
+
+def _pattern_text(msg: str) -> str:
+    """The French of a message by ``PATTERNS``, or '' when none fits."""
     for rx, template, translated in PATTERNS:
         m = rx.match(msg)
         if m:
@@ -519,7 +534,50 @@ def engine_text(msg: str) -> str:
                     a = " " + _("(shifted centres)")
                 args.append(a)
             return _(template).format(*args)
-    return _advice_text(msg) or _(msg)
+    return ""
+
+
+#: the log lines the stages write with numbers or names in them, as the catalogue holds them (locale/fr/log.json): the
+#: line with ``{}`` for each field, the French with ``{}`` or ``{0}``... (a field in another order); every line of the
+#: engine has its entry, which tests/client/test_log_translation.py keeps
+_LOGLINES: dict = {}
+
+
+def _logline_text(msg: str) -> str:
+    """The French of a log line of the stages from the catalogue's lines with fields, or '' when none fits."""
+    from .. import i18n
+    cat = i18n._cat
+    if i18n.language() == "en":
+        return ""
+    if msg in cat:                                    # a fixed sentence of the catalogue goes before any line with fields
+        return cat[msg]
+    if _LOGLINES.get("cat") is not cat:
+        rules = []
+        for key, fr in cat.items():
+            if "{}" not in key:
+                continue
+            parts = key.split("{}")
+            rx = "(.+?)".join(re.escape(x) for x in parts)
+            rules.append((sum(len(x) for x in parts), re.compile("^" + rx + "$", re.S), fr))
+        rules.sort(key=lambda r: -r[0])               # the most specific line first
+        _LOGLINES.clear()
+        _LOGLINES.update(cat=cat, rules=rules)
+    for _n, rx, fr in _LOGLINES["rules"]:
+        m = rx.match(msg)
+        if m:
+            args = []
+            for a in m.groups():
+                args.append(_pattern_text(a) or _logline_text(a) or _value_text(a) or cat.get(a) or
+                            re.sub(r"(?<![\w.])([+-]?)(\d+)\.(\d+)(?![\w.])",
+                                   lambda d: d.group(1) + number(float(d.group(2) + "." + d.group(3)), len(d.group(3))), a))
+            return _fill(fr, args) if "{}" in fr else fr.format(*args)
+    return ""
+
+
+def _fill(fr: str, args: list) -> str:
+    """``{}`` fields of a French line filled in order."""
+    it = iter(args)
+    return re.sub(r"\{\}", lambda _m: next(it), fr)
 
 
 _ADVICE: list = []

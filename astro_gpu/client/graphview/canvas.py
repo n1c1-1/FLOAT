@@ -445,8 +445,10 @@ class GraphCanvas(QGraphicsView):
             from ..services.run import engine_text
             tip += "".join("\n" + engine_text(w) for w in fallback)
         if earlier:
-            from ..graphnode import earlier_words
-            tip += "\n" + earlier_words(earlier)
+            from ..graphnode import RECOMPUTE, earlier_words
+            tip += "\n" + earlier_words(earlier) + "\n" + _(
+                "Computed with an earlier version of its method: {action} to bring it up to date").format(
+                    action=_(RECOMPUTE))
         if broken:
             tip += "\n" + _("Cannot run: {why}. Run is refused until it is fixed.").format(why=broken.rstrip("."))
         if missing:

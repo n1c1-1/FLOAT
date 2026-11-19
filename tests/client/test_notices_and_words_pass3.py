@@ -84,6 +84,23 @@ def test_the_status_line_never_says_all_up_to_date_with_nothing_computed(win):
     assert "all up to date" not in win.status.text()
 
 
+def test_the_status_line_counts_the_blocks_of_an_earlier_version(win, monkeypatch):
+    from astro_gpu.client import graphnode
+    monkeypatch.setattr(graphnode, "earlier_blocks", lambda s: 1)
+    win.update_run_button()
+    assert win.status.text().endswith("1 block in an earlier version") and "all up to date" not in win.status.text()
+    monkeypatch.setattr(graphnode, "earlier_blocks", lambda s: 2)
+    i18n.set_language("fr")
+    try:
+        win.update_run_button()
+        assert win.status.text().endswith("2 blocs en version antérieure")
+    finally:
+        i18n.set_language("en")
+    monkeypatch.setattr(graphnode, "earlier_blocks", lambda s: 0)
+    win.update_run_button()
+    assert "earlier version" not in win.status.text()
+
+
 def test_names_are_quoted_in_the_interfaces_language():
     i18n.set_language("fr")
     try:

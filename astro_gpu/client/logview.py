@@ -8,6 +8,7 @@ when shown, so that a change of language applies to them too. The console is fed
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .i18n import LOCALE, _
+from .i18n import LOCALE, _, language
 from .widgets import label
 
 #: the arguments of a history line that are words of the interface (a block's name, why a run could not start),
@@ -72,7 +73,12 @@ def last_run_text(root) -> str:
     except (OSError, TypeError, ValueError):
         return ""
     last = parts[-1].strip() if parts else ""
-    return last.removeprefix("## ").strip()
+    last = last.removeprefix("## ").strip()
+    if last and language() != "en":
+        from .services.run import engine_text
+        # the engine's own log is in English: each line of a run is said in the language of the window
+        last = re.sub(r"(?m)^(- \S+ \S+ \[[^\]]*\] )(.+)$", lambda m: m.group(1) + engine_text(m.group(2)), last)
+    return last
 
 
 class LogPanel(QFrame):

@@ -12,7 +12,7 @@ from ..widgets import ACCENT, BAD, DISABLED, OK, QSS, SHARED, WARN, Box, ElidedL
 CUT_COL, GREY_COL = "#6b7280", "#c9a227"
 BROKEN_COL = "#e05252"
 STATE_COL = {"done": OK, "pending": "#5d6470", "stale": WARN, "running": ACCENT, "failed": BAD,
-             "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN}
+             "interrupted": WARN, "skipped": "#5d6470", "fallback": WARN, "earlier": WARN}
 #: the colours of the Stars block's two images: their ports and their wires (graph.py IMAGE_COL, by the core's names)
 IMAGE_COL = {"starless": "#7aa2d6", "stars_only": "#e0c45c", "synth": "#e0965c", "": "#9aa3b2"}
 WIRE_COL = "#9aa3b2"
