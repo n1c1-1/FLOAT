@@ -213,7 +213,9 @@ def test_without_such_a_line_nothing_changes(tmp_path):
                      ["Background neutralization", "Background extraction (Correction: Subtraction)"])
     assert U.colour_line(hdr) == ""
     p, w = make(tmp_path, hdr)
-    assert Keys(p).key_parts(w.id, "image")["x"] == Keys(p).scan.image_id(str(hdr))
+    parts = Keys(p).key_parts(w.id, "image")["x"]
+    assert "colour-calibrated" not in parts            # no colour mark (a row-order mark may be there: issue #174, M27)
+    assert parts[:len(Keys(p).scan.image_id(str(hdr)))] == Keys(p).scan.image_id(str(hdr))
     _o, log = run_image(p, w)
     assert "colours calibrated" not in log
 
