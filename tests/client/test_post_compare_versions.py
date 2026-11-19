@@ -228,7 +228,7 @@ def test_both_drawings_use_the_shared_divider_and_the_french_is_there(post, monk
     i18n.set_language("fr")
     try:
         assert post3._("Compare") == "Comparer"
-        for t in (post3.COMPARE_TIP, "Compared version (left of the divider)",
+        for t in (post3.COMPARE_TIP,
                   "Not while cropping: the crop box is drawn on the whole picture",
                   "Not while healing spots: the strokes act on the version shown",
                   "Drag the divider · V: one side whole · Left: “{name}”"):
@@ -295,3 +295,57 @@ def test_two_versions_differing_by_a_slider_are_on_one_grid_across_the_divider(p
     assert shift == (0, 0) and diff < 12, (shift, diff)
     # the picture drawn: the columns on each side of the divider are the same canvas columns
     assert v.viewer.compare.size() == v.viewer.source.size()
+
+
+def _bar_geometry(v):
+    """Every widget of the top bar: (text, geometry in the bar's parent)."""
+    out = []
+    for i in range(v.top_bar.count()):
+        w = v.top_bar.itemAt(i).widget()
+        if w is None:
+            continue
+        g = w.geometry()
+        if w is v.zoom_lab:                  # (its text follows the picture's fit, which the hint line's room changes)
+            out.append(("zoom", w.isVisible(), g.y(), g.height()))
+            continue
+        out.append((w.text() if hasattr(w, "text") else "", w.isVisible(), g.y(), g.width(), g.height()))
+    return out
+
+
+def test_the_top_bar_is_identical_with_compare_on_or_off(post):
+    """#172 ergonomics: nothing moves, shrinks or changes its text in the bar when Compare toggles."""
+    v = post.view
+    _two_versions(post)
+    v.resize(1000, 700)
+    v.show()
+    QTest.qWait(400)                                            # the window's layout settles (docks, splitter)
+    off = _bar_geometry(v)
+    v.b_cmp.setChecked(True)
+    QTest.qWait(400)
+    assert _bar_geometry(v) == off
+    v.b_cmp.setChecked(False)
+    QTest.qWait(400)
+    assert _bar_geometry(v) == off
+
+
+def test_the_compared_version_is_picked_from_its_caption(post):
+    """A click on the left caption opens the versions list; the one chosen is compared; there is no list in the bar."""
+    v = post.view
+    _two_versions(post)
+    v.b_cmp.setChecked(True)
+    v.resize(1000, 700)
+    v.show()
+    QApplication.processEvents()
+    pic = QImage(v.viewer.size(), QImage.Format_ARGB32)
+    p = QPainter(pic)
+    v.viewer._paint(p)
+    p.end()
+    cap = v.viewer._caption
+    assert cap is not None
+    v._test_no_exec = True
+    QTest.mouseClick(v.viewer, Qt.LeftButton, Qt.NoModifier, cap.center().toPoint())
+    menu = v._caption_menu
+    assert [a.text() for a in menu.actions()] == ["Version 2", "Suggested"]
+    menu.actions()[1].trigger()
+    assert v.cb_cmp.currentData() == SUGGESTED and v.viewer.compare_names[0] == "Suggested"
+    assert not v.cb_cmp.isVisible()

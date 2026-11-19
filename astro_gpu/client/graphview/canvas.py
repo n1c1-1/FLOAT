@@ -191,6 +191,7 @@ class GraphCanvas(QGraphicsView):
         bridge.appeared.connect(self._show_block)
         bridge.toast.connect(self.say)
         bridge.rich_toast.connect(lambda t, ls: self.toast.say_links(t, ls, self._reading))
+        bridge.toast_close.connect(self.toast.hide)
         bridge.rich_toast_refresh.connect(lambda: self.toast.isVisible() and self.toast.refresh())
         self.toast.link.connect(self._toast_link)
         bridge.replaced.connect(self._replaced)
@@ -405,7 +406,7 @@ class GraphCanvas(QGraphicsView):
         # its result is of an earlier version of its method: a small mark and one line, the block stays up to date
         earlier = [tuple(v) for v in bd.get("earlier") or []] if state == "done" and not grey and not blk.off else []
         broken, missing = bd.get("broken") or "", bd.get("missing") or ""
-        word = _(FALLBACK_WORD) if fallback else state_word(state)
+        word = _(FALLBACK_WORD) if fallback else (_("Earlier version") if earlier else state_word(state))
         if state == "stale" and not pending:             # Outdated: why, in a few words (the setting, the block)
             why = doc.why(b)
             word = f"{word} · {why}" if why else word

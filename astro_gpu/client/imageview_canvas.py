@@ -16,9 +16,11 @@ from .imageview_images import CANVAS_BG, ZOOM_STEP, Prepared
 from .imageview_loading import Display, to_qimage, tag
 
 
-def draw_split(p: QPainter, xs: float, height: float, left_name: str = "", right_name: str = ""):
+def draw_split(p: QPainter, xs: float, height: float, left_name: str = "", right_name: str = "", chevrons: bool = True):
     """The divider of a version compare, shared by the block editors' Split and Post's Compare: a shadowed line at ``xs``,
-    its handle with two chevrons, and the two names as tags."""
+    its handle with two chevrons, and the two names as tags. ``chevrons`` False: the tags carry no arrow (they are not
+    navigation); the left one then has a small drop-down mark, it opens the list of what it compares. Returns the left tag's
+    rectangle (None without name)."""
     p.setRenderHint(QPainter.Antialiasing)
     p.setPen(QPen(QColor(0, 0, 0, 120), 4))
     p.drawLine(QPointF(xs, 0), QPointF(xs, height))
@@ -33,11 +35,14 @@ def draw_split(p: QPainter, xs: float, height: float, left_name: str = "", right
         tri = QPolygonF([QPointF(xs + sgn * 3, c.y() - 4), QPointF(xs + sgn * 7, c.y()),
                          QPointF(xs + sgn * 3, c.y() + 4)])
         p.drawPolyline(tri)
+    left = None
     if left_name:
-        tag(p, QPointF(xs - 10, 10), left_name, right=True, role="chevron_left")
+        left = tag(p, QPointF(xs - 10, 10), left_name, right=True, role="chevron_left" if chevrons else "chevron_down",
+                   icon_end=not chevrons)
     if right_name:
-        tag(p, QPointF(xs + 10, 10), right_name, role="chevron_right")
+        tag(p, QPointF(xs + 10, 10), right_name, role="chevron_right" if chevrons else None)
     p.setRenderHint(QPainter.Antialiasing, False)
+    return left
 
 
 # ---------------------------------------------------------------------------------------------- the canvas

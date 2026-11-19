@@ -33,6 +33,16 @@ class Toast(QLabel):
         self.linkActivated.connect(self.link.emit)
         self.hide()
 
+    def enterEvent(self, e):                                         # noqa: N802 - Qt's name
+        if self._links and self.isVisible():
+            self.timer.stop()                            # the pointer is on it: it stays (a snackbar's way)
+        super().enterEvent(e)
+
+    def leaveEvent(self, e):                                         # noqa: N802
+        if self._links and self.isVisible():
+            self.timer.start(2500)                       # and goes a moment after the pointer leaves
+        super().leaveEvent(e)
+
     def say(self, text):
         self._fn = self._links = self._keep = None
         self._show(text, False)
