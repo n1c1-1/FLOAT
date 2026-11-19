@@ -75,7 +75,7 @@ Operations: apply(graph, name, **kwargs) -> (graph2, Result), argument names fix
   exclude_frames(sid, names, excluded=True)   lights excluded by hand (Project.excluded, by file name)
   exclude_files(session, kind, paths, excluded=True)   single files of a Session left out by hand (lights: as
                                        exclude_frames; calibration frames: its night's left_out)
-  set_image_file(block, path=None, stretched=None)   an Image block's file
+  set_image_file(block, path=None, stretched=None, unstretch=None)   an Image block's file ("estimated": its stretch undone by estimate)
   rename_tap(tap, name)                set_flow_pauses(flow, pauses)   a row's or tap's own pause list (None: its
                                        blocks' pauses)
   set_flow_options(flow, options=None, end=None)   a workflow made from options (Row.legacy), or its early exit

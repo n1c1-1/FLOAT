@@ -130,8 +130,40 @@ class Denoise(Stage):
         return {"adaptation": Auto("short", "noise correlation between neighbouring pixels {c:.2f}, as in the "
                                             "pretraining", {"c": c})}
 
+    def run_single(self, ctx: Context, p: DenoiseParams, dev) -> None:
+        """Denoise a single image (issue #174): the pretrained network, with the noise measured on the image itself (the
+        median and the 1.4826 MAD of its channels, ``norm_params``) and no half-stack: the noise map is flat and the image
+        is not a mean of two (no division of it by the square root of 2). The dither check, which reads the noise between
+        the two half-stacks, is skipped. The network is the colour one (the number of frames of a mono image is unknown)."""
+        from ..core.stage import StageError
+        if p.method == "adapted":
+            raise StageError(WHY_NO_ADAPTED)
+        Wt = ctx.load("stack", "drz_weight.npy").astype(np.float32)
+        full = image_in(ctx).img
+        bk, sg, nm = norm_params(full, np.ones_like(Wt))
+        mono = is_grey(full)
+        net = pretrained(dev, mono=False)
+        ctx.log("a single image: the noise is measured on the image, the dither check is skipped (it reads two half-stacks)")
+        ctx.metric("adaptation_steps", 0)
+        torch.save({"net": net.state_dict(), "bk": bk, "sg": sg}, ctx.out("n2n_model.pt"))
+        net.eval()
+        shifts = PASSES[:1] if p.fast else PASSES
+        grey = (lambda a: np.repeat(a.mean(0, keepdims=True), 3, axis=0)) if mono else (lambda a: a)
+        d = apply_net(net, full, nm, bk, sg, dev, shifts=shifts, check=ctx.check_stop,
+                      progress=lambda done, total: ctx.progress(0.98 * done / total, f"denoising the image: tile {done} of {total}"))
+        dF = keep_level(grey(d), full, Wt)
+        ctx.save("n2n_full.npy", dF)
+        g0, g1 = _noise(full[1]), _noise(dF[1])
+        ctx.metric("noise_before", round(g0, 3))
+        ctx.metric("noise_after", round(g1, 3))
+        ctx.metric("noise_reduction", round(g0 / max(g1, 1e-9), 2))
+        ctx.log(f"background noise divided by {g0 / max(g1, 1e-9):.1f}")
+        ctx.preview("before_after", before_after(full, dF))
+
     def run(self, ctx: Context, p: DenoiseParams) -> None:
         dev = ctx.device
+        if single_image(ctx):
+            return self.run_single(ctx, p, dev)
         A = image_in(ctx, "A").img                   # the half-stacks as the blocks before it made them (#47)
         B = image_in(ctx, "B").img
         Wt = ctx.load("stack", "drz_weight.npy").astype(np.float32)
@@ -190,6 +222,19 @@ class Denoise(Stage):
         ctx.metric("noise_reduction", round(g0 / max(g1, 1e-9), 2))
         ctx.log(f"background noise divided by {g0 / max(g1, 1e-9):.1f}")
         ctx.preview("before_after", before_after(full, dF))
+
+
+def single_image(ctx: Context) -> bool:
+    """Whether the stack this block reads is one image from a file (the Image block: no half-stacks, issue #174)."""
+    try:
+        return ctx.load_json("stack", "drz_meta.json").get("source") == "image"
+    except (OSError, ValueError, KeyError):
+        return False
+
+
+#: why the Adapted method is not offered on a single image (settings' greyed reason, the run's refusal)
+WHY_NO_ADAPTED = ("Adapted learns the noise from two half-stacks: a single image has none. Pretrained measures the "
+                  "noise on the image itself.")
 
 
 def keep_level(done: np.ndarray, src: np.ndarray, weight: np.ndarray, step: int = 7, rounds: int = 5,

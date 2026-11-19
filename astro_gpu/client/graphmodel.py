@@ -2457,7 +2457,8 @@ class GraphEditing:
         return v
 
     # ------------------------------------------------------------------ an Image block
-    def set_image_file(self, p, path: str | None = None, stretched: bool | None = None):
+    def set_image_file(self, p, path: str | None = None, stretched: bool | None = None,
+                       unstretch: str | None = None):
         from ..stages.image import stretched_by_nature
         src = dict(self.p.workflow(p.pid).source or {})
         before = stretched_by_nature(src.get("path") or "")
@@ -2475,7 +2476,10 @@ class GraphEditing:
         head = root.blocks[0] if root is not None and root.blocks else None
         if head is None or self._g.blocks[head].kind != "image":
             raise GraphRefused(_("not in workflow"))
-        self._do([("set_image_file", {"block": head, "path": src.get("path", ""), "stretched": src.get("stretched")})])
+        args = {"block": head, "path": src.get("path", ""), "stretched": src.get("stretched")}
+        if unstretch is not None:
+            args["unstretch"] = unstretch
+        self._do([("set_image_file", args)])
 
     # ------------------------------------------------------------------ combinations
     def _source_port(self, pid, image):

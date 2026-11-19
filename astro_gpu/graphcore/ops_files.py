@@ -387,10 +387,11 @@ def excluded_files(q, session, kind):
     return list(((e or {}).get("left_out") or {}).get(kind) or [])
 
 
-def op_set_image_file(q, block, path=None, stretched=None):
-    """The file an Image block reads, and whether it is stretched (its source as stored)."""
+def op_set_image_file(q, block, path=None, stretched=None, unstretch=None):
+    """The file an Image block reads, whether it is stretched, and whether its stretch is undone by estimate (issue
+    #174: "estimated", or "" for none; its source as stored). A new file or the Stretched kind drops the estimate."""
     b = _blk(q, block, ("image",))
-    if path is None and stretched is None:
+    if path is None and stretched is None and unstretch is None:
         raise Refusal("nothing to change")
     src = copy.deepcopy(b.source) if b.source is not None else {
         "path": "", "stretched": bool(rules.effective(q, block)["Stretched image"])}
@@ -398,7 +399,17 @@ def op_set_image_file(q, block, path=None, stretched=None):
         src["path"] = str(path)
     if stretched is not None:
         src["stretched"] = bool(stretched)
+    if unstretch is not None:
+        src["unstretch"] = str(unstretch)
+        if unstretch and src.get("stretched"):
+            raise Refusal("an image read as stretched has no stretch to undo")
+    elif path is not None or src.get("stretched"):
+        src.pop("unstretch", None)
+    if not src.get("unstretch"):
+        src.pop("unstretch", None)
     b.source = src
+    if unstretch is not None:
+        return Out("stretch undone by estimate" if src.get("unstretch") else "stretch left as it is", block)
     if path is not None:
         return Out(M("image file: {_path}", _path=_file_name(path) if path else ""), block)
     return Out("stretched image" if src["stretched"] else "linear image", block)

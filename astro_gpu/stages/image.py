@@ -5,6 +5,10 @@ as "stack" (core/workflow.PROVIDES): drz_full.npy (3, H, W), drz_weight.npy (all
 drz_meta.json (scale 1: the image is at its own scale). It has no half-stacks: Denoise is greyed, and Stars takes its
 noise unit from the image itself (stages/star_removal.py).
 
+An image already stretched (issue #174; stages/unstretch.py): when its FITS header lists the stretches applied and every
+one can be inverted exactly, it is brought back to linear automatically (one line of the log); otherwise it is read as
+it is, said by a warning on the block, and "Estimated" (``unstretch``) can bring it back by an estimated inverse.
+
 A monochrome image is given its one channel three times. Values in [0, 1] are brought to the range of a 16-bit
 sensor's (x 65535), so that the levels the later stages measure are of the size they meet in a stack.
 """
@@ -101,6 +105,9 @@ class ImageParams(StageParams):
     stretched: bool = P(False, label="Already stretched", level="internal",
                         help="The image is already stretched (not linear): it goes to Post, or to Split stars, as "
                              "it is.")
+    unstretch: str = P("", label="Undo stretch", level="internal",
+                       help="\"estimated\": the image is brought back to linear by an estimated inverse of its stretch "
+                            "(issue #174). Left empty, a stretch the file's header lists exactly is still undone.")
 
 
 def bottom_up(path: str | Path) -> bool:
@@ -187,8 +194,11 @@ class ImageSource(Stage):
         if p.stretched:
             self.stretched(ctx, p, a)
             return
+        undone = self.unstretched(ctx, p, a)
+        if undone is not None:
+            a = undone                                  # back in 0-1, like a linear float image
         top = float(np.percentile(a, 99.99)) if a.size else 0.0
-        factor = 65535.0 if 0 < top <= 1.5 else 1.0
+        factor = 65535.0 if undone is not None or 0 < top <= 1.5 else 1.0
         if factor != 1.0:
             a = a * np.float32(factor)
         _c, H, W = a.shape
@@ -203,6 +213,31 @@ class ImageSource(Stage):
         v = np.moveaxis(a, 0, -1)
         lo, hi = np.percentile(v, 1), np.percentile(v, 99.5)
         ctx.preview("image", np.clip((v - lo) / max(hi - lo, 1e-6), 0, 1) ** 0.5)
+
+    def unstretched(self, ctx: Context, p: ImageParams, a: np.ndarray) -> np.ndarray | None:
+        """The image brought back to linear (issue #174), or None when it is read as it is: from its header when the
+        stretches it lists can be inverted exactly (automatic, said in one line of the log), or by the estimate when the
+        block asks for it. The values come back in 0-1."""
+        from . import unstretch as U
+        an = U.analyse(p.path)
+        if p.unstretch == "estimated":
+            scale = U.scale_of(a)
+            try:
+                lin, info = U.estimate(a.astype(np.float64) / scale, mono=an.mono)
+            except ValueError as e:
+                raise StageError(f"the stretch cannot be estimated: {e}") from e
+            ctx.metric("unstretch", "estimated")
+            ctx.log("stretch undone by estimate (mid-tones m = " + ", ".join(f"{m:.4f}" for m, _u in info) + ")")
+            return lin.astype(np.float32)
+        if not an.exact:
+            return None
+        scale = U.scale_of(a)
+        y = a.astype(np.float64) / scale
+        lin = U.undo(y, an.ops, an.mono)
+        ctx.metric("unstretch", "header")
+        ctx.log(f"stretch undone from the header ({len(an.ops)} step{'s' if len(an.ops) != 1 else ''}; "
+                f"{U.clipped(y)} pixels the stretch clipped stay as they are)")
+        return np.nan_to_num(lin, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
     def stretched(self, ctx: Context, p: ImageParams, a: np.ndarray) -> None:
         """An image already stretched: its values in 0-1 (an integer file by its type's range, a float one by its

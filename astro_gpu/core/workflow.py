@@ -147,7 +147,7 @@ def greyed(options: dict[str, Any], image: bool = False, mono: bool = False) -> 
         out["color"] = MONO_NO_COLOUR
     if "astrometry" in cut and "color" not in cut:
         out["color"] = NEEDS_ASTROMETRY
-    if image and o["denoise"]:
+    if image and o["denoise"]:       # (a workflow made from options: its image has no Denoise; a graph's one has, #174)
         out["denoise"] = NEEDS_HALF_STACKS
     if image and o["deconvolution"]:
         out["deconv"] = NEEDS_HALF_STACKS
@@ -718,7 +718,9 @@ def graph_problem(blocks: Sequence[dict], source: str, raise_it: bool = False) -
             frame_rank = r
         if b == "color" and "astrometry" not in seen and "align_on" not in seen and source != "fusion":
             return bad(WHY_NEEDS, need=_title("astrometry"))
-        if b in ("denoise", "deconv") and (source != "frames" or "stacking" not in seen):
+        if b == "denoise" and source == "image":      # a single image: Pretrained alone, its noise measured (#174)
+            pass
+        elif b in ("denoise", "deconv") and (source != "frames" or "stacking" not in seen):
             return bad(WHY_HALVES)
         if b == "synth" and "stars" not in seen and not (source == "fusion" and "output" in seen):
             return bad(WHY_NEEDS, need=_title("stars"))

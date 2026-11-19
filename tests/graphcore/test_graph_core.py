@@ -97,8 +97,10 @@ def test_titles_numbers_and_reasons():
     assert doc.title(grads[0]) == "Gradient"
     img = Doc.from_template("several_images")
     row = img.project.rows[0]
-    res = img.apply("add_block", kind="denoise", at={"type": "insert", "row": row.id, "after": row.blocks[0]})
+    res = img.apply("add_block", kind="deconv", at={"type": "insert", "row": row.id, "after": row.blocks[0]})
     assert res.reason_text() == "needs half-stacks (from frames)"              # the engine's reason
+    res = img.apply("add_block", kind="denoise", at={"type": "insert", "row": row.id, "after": row.blocks[0]})
+    assert res.ok                                                              # a single image: Denoise, Pretrained (#174)
     res = img.apply("add_block", kind="selection", at={"type": "insert", "row": row.id, "after": row.blocks[0]})
     assert res.reason_text() == "no Selection from image file"
     f = Doc.from_template("filters_minimal")

@@ -353,11 +353,13 @@ def test_a20_a21_switch_off_and_needed():
     assert refused_inert(doc, "remove_block", block=a) == "needed by Color"
 
 
-def test_a24_debruitage_needs_half_stacks():
+def test_a24_deconvolution_needs_half_stacks_denoise_takes_a_single_image():
     doc = Doc.from_template("several_images")
     assert len([w for w in doc.project.wires]) == 3
-    ps = [p for p in places(doc.project, doc.view, kind="denoise") if p.kind == "insert"]
+    ps = [p for p in places(doc.project, doc.view, kind="deconv") if p.kind == "insert"]
     assert all(p.reason_text() == "needs half-stacks (from frames)" for p in ps)
+    ps = [p for p in places(doc.project, doc.view, kind="denoise") if p.kind == "insert"]
+    assert any(not p.reason_text() for p in ps)                  # issue #174: a single image is denoised
 
 
 def test_a25_a26_combinaison_unwired_then_loop():
