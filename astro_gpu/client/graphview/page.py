@@ -38,10 +38,12 @@ def _is_model(x) -> bool:
     return x is not None and hasattr(x, "graph_view") and hasattr(x, "block_map")
 
 
-def images_added(files: list) -> str:
+def images_added(files: list, filled: int = 0) -> str:
     """What Open images… did to a project, in the words of its notice and of its Undo (the hand pass: no notice, and
     an Undo said "a change of the workflows (Graph)"): "Image workflow added: M42.tif"."""
     names = ", ".join(Path(f).name for f in files)
+    if filled and len(files) == 1:                       # an Image block that had no file: its file chosen
+        return _("Image chosen: {file}").format(file=names)
     if len(files) == 1:
         return _("Image workflow added: {file}").format(file=names)
     return _("{n} Image workflows added: {files}").format(n=len(files), files=names)
@@ -579,6 +581,11 @@ class GraphPage(SidesHost, QWidget):
         elif ident in self.bridge.graph.blocks:
             self.canvas.delete_block(ident)
 
+    def _waits_for_file(self, q) -> bool:
+        """Whether the workflow starts from an Image block with no file chosen yet."""
+        src = self.s.p.workflow(q.pid).source
+        return isinstance(src, dict) and "path" in src and not src["path"] and not src.get("fusion")
+
     def place_images(self, files: list):
         """One Image workflow per file, each a layer of Post (today's ``place_images``, File > Open images…): the first
         workflow made, or None (a file that cannot be read: said, nothing made; a page without a project model)."""
@@ -592,8 +599,16 @@ class GraphPage(SidesHost, QWidget):
                 self.toast(_(why).format(name=Path(f).name))
                 return None
         made = []
+        allfiles = list(files)
+        files = list(files)
+        self.placed_new, self.filled = True, 0
         try:
             with s.batch():
+                waiting = next((q for q in s.paths if self._waits_for_file(q)), None)
+                if waiting is not None:                  # an Image block with no file yet takes the first, as its panel's
+                    s.set_image_file(waiting, files.pop(0))   # Choose image… does (the same function)
+                    made.append(s.view(waiting.pid))
+                    self.placed_new, self.filled = bool(files), 1
                 for f in files:
                     q = s.add_image_workflow(s.unique_name(Path(f).stem), f, stretched=stretched_by_nature(f))
                     s.set_graph(q, [])
@@ -603,7 +618,7 @@ class GraphPage(SidesHost, QWidget):
             self.toast(_("The gesture failed: nothing changed"))
             return None
         if hasattr(s, "name_step"):                      # its Undo says what it takes back, as the notice says it
-            s.name_step(images_added(files))
+            s.name_step(images_added(allfiles, filled=self.filled))
         self.request_refresh()
         return made[0] if made else None
 

@@ -1920,6 +1920,14 @@ class _ProjectBase(QObject):
         p = p or self.path
         return list(self._chains.get(p.pid, [])) if p is not None else []
 
+    def input_stage(self, p: WorkflowView | None = None, dep: str = "stack") -> str:
+        """The stage of the workflow's chain that stands for ``dep``: the stack itself, or what stands for it (the Image
+        block of a workflow that starts from an image file: its result is read as a stack, its state is its own)."""
+        chain = self.all_stages(p)
+        if not chain or dep in chain:
+            return dep
+        return next((x for x in chain if dep in wfl.PROVIDES.get(wfl.base(x), ())), dep)
+
     def path_stages(self, p: WorkflowView | None = None) -> list[str]:
         return [s for s in self.all_stages(p) if s not in TRUNK]
 

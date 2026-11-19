@@ -255,9 +255,11 @@ class Steps(QObject):
         """The stage whose result a block after Align on shows where it would show the stack: Chains.resolve gives the
         aligned image where a stage reads what the entry Align on itself reads (issue #165). Stacking keeps the stack."""
         chain = self.s.all_stages(p)
-        if stage != "stack" or "align_on" not in chain:
+        if stage != "stack":
             return stage
-        return "align_on"
+        if "align_on" in chain:
+            return "align_on"
+        return self.s.input_stage(p) if hasattr(self.s, "input_stage") else stage   # an Image block's workflow: its own stage
 
     def visuals(self, p, k: str) -> list[VisualSpec]:
         """The tabs of a block of a workflow, in their order: pictures (shown in the common viewer), charts, tables,

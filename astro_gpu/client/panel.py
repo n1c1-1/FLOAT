@@ -1077,11 +1077,16 @@ class Panel(QWidget):
         row.addStretch(1)
         self.bv.addLayout(row)
         # its kind decides what can follow it: while nothing follows, either; then the one the blocks need
+        st = s.image_state(p) if path else {"warning": "", "estimate_off": "", "estimated": False, "exact": False, "lines": ""}
+        undone = bool(path) and not stretched and bool(st.get("exact") or st.get("estimated"))
         alone = not s.graph(p)
         self.bv.addWidget(self.group_title(_("Kind")))
         row = QHBoxLayout()
-        for value, text, tip in ((False, _("Linear"), _("Straight out of a stack: the blocks after it read it as a "
-                                                         "stack")),
+        # "Kind" says how the file is read: a file whose stretch is undone is read as linear, and says it
+        lin = ((_("Linear (undone)"), _("Its stretch is undone: the blocks after it read it as a linear stack"))
+               if undone else
+               (_("Linear"), _("Straight out of a stack: the blocks after it read it as a stack")))
+        for value, text, tip in ((False, lin[0], lin[1]),
                                  (True, _("Stretched"), _("Already stretched: it goes to Post as it is"))):
             k = QPushButton(text)
             k.setCheckable(True)
@@ -1094,7 +1099,6 @@ class Panel(QWidget):
         row.addStretch(1)
         self.bv.addLayout(row)
         self.bv.addSpacing(6)
-        st = s.image_state(p) if path else {"warning": "", "estimate_off": "", "estimated": False, "exact": False, "lines": ""}
         if st["warning"]:                                   # issue #174: said, never refused
             self.bv.addWidget(label(st["warning"], "warn", wrap=True))
         self._image_colours_line(p)
