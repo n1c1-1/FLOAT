@@ -455,3 +455,15 @@ def test_what_is_changed_in_the_stars_mix_is_added_to_the_engine_s_picture():
     assert cp.plan_errors == 0
     assert [r["sub"] for r, _d in pe.rows(pe.normalize([g])) if r["kind"] == "sub"] == [
         "stars", "stars/f:R", "stars/f:G", "starless", "f:Ha", "f:Ha/f:SII", "f:Ha/f:Ha", "f:Ha/f:OIII", "f:OIII"]
+
+
+def test_a_draft_takes_its_statistics_from_its_own_picture_and_never_changes_the_exact_picture(monkeypatch):
+    monkeypatch.setattr(pe, "STATS_SIDE", 30)                    # (the statistics are measured on a reduced image)
+    layers = pe.normalize([group(tree())])
+    prov = Nested()
+    cp = Composer(prov)
+    draft = cp.compose(copy.deepcopy(layers), 2, draft=True, track=True).rgb
+    exact = cp.compose(copy.deepcopy(layers), 2, track=True).rgb
+    cold = Composer(Nested()).compose(copy.deepcopy(layers), 2).rgb
+    assert np.array_equal(exact, cold)                           # the exact picture is what it was without the draft
+    assert draft.shape == exact.shape and np.abs(draft - exact).max() < 0.1

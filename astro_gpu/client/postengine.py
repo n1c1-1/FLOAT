@@ -2271,7 +2271,7 @@ class Composer(MixRendering):
                    for sub in self._shown(lay)]
             return self._together(lay, got, (abox[3] - abox[1], abox[2] - abox[0]))
         if lay.get("part") == FUSION:
-            return self._fusion_rgb(lay, level, abox, canvas, cache)
+            return self._fusion_rgb(lay, level, abox, canvas, cache, draft)
         W, H = canvas.size(level)
         whole = (0, 0, W, H)
         want = whole if level > 0 else abox
@@ -2916,7 +2916,7 @@ class Composer(MixRendering):
                 self._keep_step_thumb(keep_mask(fl, fm), sig, where)
             side = (lay.get("side_masks") or {}).get(sub)
             if side is not None:                                          # that side's mask, before the blend
-                srcs = self._side_sources(lay, sub, side, x, got, level, abox, canvas, cache) if has_mix(lay) else None
+                srcs = self._side_sources(lay, sub, side, x, got, level, abox, canvas, cache, draft) if has_mix(lay) else None
                 m = self.mask({"mask": side}, level, abox, x, canvas, ctx, srcs,
                               {"self": sig} if srcs else {None: sig})     # (the image before this mask)
                 keep_mask(lay, m, (lay["id"], sub))

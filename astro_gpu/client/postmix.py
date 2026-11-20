@@ -112,11 +112,18 @@ class MixRendering:
             self.images.hold(key, holder)
         return hit[:-1], hit[-1] > 0.5
 
-    def _fusion_stats(self, lay, root, canvas) -> dict:
+    @staticmethod
+    def _stats_at(canvas, draft: bool, level: int = 0) -> int:
+        """The level the statistics of a mix are measured at: ``stats_level``, the same for every level and region rendered;
+        a draft (a quick look while a slider moves: a hue or an intensity changes them at each move) measures them on its
+        own picture, and the exact picture at the release the exact statistics."""
+        return max(pe.stats_level(canvas.W, canvas.H), int(level)) if draft else pe.stats_level(canvas.W, canvas.H)
+
+    def _fusion_stats(self, lay, root, canvas, draft: bool = False, level: int = 0) -> dict:
         """The statistics of the mix at ``root`` (render/simple.image_stats), measured once on the whole canvas at the
-        measure level (``stats_level``): the same for every level and region rendered."""
+        measure level (``_stats_at``): the same for every level and region rendered."""
         node = pe.mix_at(lay, root)
-        at = pe.stats_level(canvas.W, canvas.H)
+        at = self._stats_at(canvas, draft, level)
         key = (root, pe.nest_core(node), self._struct(node), canvas.W, canvas.H, canvas.origin, at)
         hit = self._fstats.get(key)
         if hit is None:
@@ -139,14 +146,15 @@ class MixRendering:
         return y.numpy()
 
     # ------------------------------------------------------------ the stretch
-    def _parts_key(self, lay, root, level, box, canvas) -> tuple:
+    def _parts_key(self, lay, root, level, box, canvas, draft: bool = False) -> tuple:
         """What the stretched planes of a mix (``_mix_parts``) depend on: the layer as ``_key`` says it, its sliders left
         out, and in their place what the colour-preserving stretch reads of its settings (the starless side's); the stars
         side's, the engine's picture of the stars."""
         node = pe.mix_at(lay, root)
         if root == "starless":
             return self._key_of(lay, "starless", level, box, canvas, {}) + (
-                pe._stretch_reads(self.provider.fusion_settings(lay)), self._struct(node))
+                pe._stretch_reads(self.provider.fusion_settings(lay)), self._struct(node)) + (
+                ("draft",) if draft else ())
         return (self._key_of(lay, "stars", level, box, canvas), pe.nest_core(node), self._struct(node))
 
     def _key_of(self, lay, path, level, box, canvas, sliders=None) -> tuple:
@@ -155,7 +163,7 @@ class MixRendering:
             sub = dict(sub, sliders=sliders)
         return self._key(sub, level, box, canvas)
 
-    def _mix_parts(self, lay, root, level, box, canvas, cache) -> np.ndarray:
+    def _mix_parts(self, lay, root, level, box, canvas, cache, draft: bool = False) -> np.ndarray:
         """(L + 2, h, w): the mix's leaves stretched (each its balanced linear plane, minus the black point, times the
         factor: before its intensity), the factor, the covered pixels (1, 0 elsewhere). The factor is the
         colour-preserving stretch of the mix (render/simple.SimpleRenderEngine.colour_factor) on the outermost mix's
@@ -165,7 +173,7 @@ class MixRendering:
         # at full resolution not kept: four or five planes of the whole image would push out of the cache the images a
         # change does not touch (the other side, the stretched planes), and a hue changes them all anyway
         cache = cache and level > 0
-        key = ("parts", root) + self._parts_key(lay, root, level, box, canvas)
+        key = ("parts", root) + self._parts_key(lay, root, level, box, canvas, draft)
         holder = (lay["id"], (pe.FUSION, "parts", root), level)
         hit = self.images.get(key) if cache else None
         if hit is not None:
@@ -181,7 +189,7 @@ class MixRendering:
         vf = torch.from_numpy(valid.astype(np.float32))
         out = torch.empty((n + 2, h, w), dtype=torch.float32)
         if root == "starless":
-            st = self._fusion_stats(lay, root, canvas)
+            st = self._fusion_stats(lay, root, canvas, draft, level)
             F, c0 = SimpleRenderEngine.colour_factor(x, st, self.provider.fusion_settings(lay))
             torch.sub(L, float(c0), out=out[:n])
         else:
@@ -199,12 +207,12 @@ class MixRendering:
             self.images.put(key, hit, holder)
         return hit
 
-    def _c0(self, lay, root, canvas) -> float:
+    def _c0(self, lay, root, canvas, draft: bool = False, level: int = 0) -> float:
         """The black point the stretch subtracts (the starless side's; the stars side's has none of its own)."""
         if root != "starless":
             return 0.0
         from ..render.simple import _anchors
-        return float(_anchors(self._fusion_stats(lay, root, canvas)["lum"])[0])
+        return float(_anchors(self._fusion_stats(lay, root, canvas, draft, level)["lum"])[0])
 
     def _eval(self, lay, node, path, leaf, one, c0, hook=None, rec=None):
         """(y, pre) of the mix at ``path``: its picture (3, h, w), made of its roles' images, and each role's image before
@@ -265,20 +273,20 @@ class MixRendering:
                     y[c].sub_(one * (c0 * float(lost[c])))
         return y, pre
 
-    def _pass(self, lay, root, level, abox, canvas, cache):
+    def _pass(self, lay, root, level, abox, canvas, cache, draft: bool = False):
         """What a render of the mix at ``root`` over ``abox`` works from: (its stretched planes cut to the box, ``leaf``,
         the factor times the covered pixels, the black point, the covered pixels)."""
         import torch
         W, H = canvas.size(level)
         whole = (0, 0, W, H)
-        parts = self._mix_parts(lay, root, level, whole if level > 0 else abox, canvas, cache)
+        parts = self._mix_parts(lay, root, level, whole if level > 0 else abox, canvas, cache, draft)
         if level > 0 and abox != whole:
             x0, y0, x1, y1 = abox
             parts = parts[:, y0:y1, x0:x1]
         idx = {leaf: i for i, leaf in enumerate(self._leaves(lay, root))}
         n = len(idx)
         T = torch.from_numpy(np.ascontiguousarray(parts))
-        return T, (lambda p, r, k: T[idx[(p, r, k)]]), T[n] * T[n + 1], self._c0(lay, root, canvas), T[n + 1]
+        return T, (lambda p, r, k: T[idx[(p, r, k)]]), T[n] * T[n + 1], self._c0(lay, root, canvas, draft, level), T[n + 1]
 
     def _mix_end(self, lay, root, y, valid) -> np.ndarray:
         """The end of the stretch on a mix's picture (Contrast, Saturation: render/simple.SimpleRenderEngine.finish,
@@ -291,16 +299,16 @@ class MixRendering:
         y.mul_(torch.from_numpy(np.asarray(valid >= 0.5, np.float32))[None])
         return y.permute(1, 2, 0).contiguous().numpy()
 
-    def _default(self, lay, root, level, abox, canvas, cache):
+    def _default(self, lay, root, level, abox, canvas, cache, draft: bool = False):
         """(the mix's picture as its run made it, before the end of its stretch (3, h, w), clamped; the covered pixels;
         {path: the image of each node before its filters}): all nodes shown, none with a filter."""
-        T, leaf, one, c0, vf = self._pass(lay, root, level, abox, canvas, cache)
+        T, leaf, one, c0, vf = self._pass(lay, root, level, abox, canvas, cache, draft)
         rec: dict = {}
         y, _pre = self._eval(lay, pe.mix_at(lay, root), root, leaf, one, c0, None, rec)
         y = y.clamp(min=0)
         return y, vf, rec
 
-    def _fusion_rgb(self, lay, level, abox, canvas, cache) -> np.ndarray:
+    def _fusion_rgb(self, lay, level, abox, canvas, cache, draft: bool = False) -> np.ndarray:
         """The image of a node of a layer's tree (``sub_layer``: ``node``) over the box at the level: a side that is a
         mix, its picture with all its nodes as they are (cached as a workflow layer's image is), or a node, its grey
         image as its mix makes it. A node's image is not kept: it is one plane of the planes kept, made again at once, and
@@ -311,11 +319,13 @@ class MixRendering:
         whole = (0, 0, W, H)
         want = whole if level > 0 else abox
         cache_parts, cache = cache, cache and node == root
+        if draft and level > 0 and self.images.get(self._key(lay, level, abox, canvas)) is None:
+            cache = False                                 # (a quick look with its own statistics: never kept as the exact picture)
         key = self._key(lay, level, abox, canvas)
         holder = (lay["id"], (pe.FUSION, node), level)
         a = self.images.get(key) if cache else None
         if a is None:
-            y, vf, rec = self._default(lay, root, level, want, canvas, cache_parts)
+            y, vf, rec = self._default(lay, root, level, want, canvas, cache_parts, draft)
             if node == root:
                 a = self._mix_end(lay, root, y, vf.numpy() if hasattr(vf, "numpy") else vf)
             else:
@@ -387,8 +397,8 @@ class MixRendering:
             return out
         state = per(root)
         fin = pe._finish_reads(self.provider.fusion_settings(lay)) if reads and root == "starless" else None
-        return (pe._sig(self._parts_key(lay, root, level, whole if level > 0 else abox, canvas), state, fin), level,
-                tuple(abox), bool(draft))
+        return (pe._sig(self._parts_key(lay, root, level, whole if level > 0 else abox, canvas, draft), state, fin),
+                level, tuple(abox), bool(draft))
 
     # ------------------------------------------------------------ a side that is a mix
     def _mix_side(self, lay, own, root, level, abox, canvas, ctx, cache, draft, check, keep_mask, where, want, thumbs):
@@ -436,7 +446,7 @@ class MixRendering:
         import torch
         hw = (abox[3] - abox[1], abox[2] - abox[0])
         node = pe.mix_at(lay, root)
-        T, leaf, one, c0, vf = self._pass(lay, root, level, abox, canvas, cache)
+        T, leaf, one, c0, vf = self._pass(lay, root, level, abox, canvas, cache, draft)
         sides, shown = lay.get("side_masks") or {}, lay.get("shown") or {}
         memo: dict = {}
         comp = self
@@ -523,7 +533,7 @@ class MixRendering:
         y.clamp_(min=0)
         return y, vf.numpy()
 
-    def _side_sources(self, lay, sub, side, x, got, level, abox, canvas, cache) -> dict:
+    def _side_sources(self, lay, sub, side, x, got, level, abox, canvas, cache, draft: bool = False) -> dict:
         """What a part of a side's mask that reads an image may read, the same choice as a node's mask: the image itself
         first (what it read before the choice), the picture (the filters mixed, without the stars), each filter of the
         starless mix and of the mix of this side (stretched)."""
@@ -536,7 +546,7 @@ class MixRendering:
                 continue
             paths = {r: pf.child(root, r) for r in node["fusion"]["roles"]}
             if wanted & set(paths.values()):
-                _y, _vf, rec = self._default(lay, root, level, abox, canvas, cache)
+                _y, _vf, rec = self._default(lay, root, level, abox, canvas, cache, draft)
                 for r, cp in paths.items():
                     if rec.get(cp) is not None:
                         out[cp] = pe.grey3(rec[cp].numpy())
