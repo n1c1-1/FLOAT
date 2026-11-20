@@ -66,6 +66,7 @@ def from_store(E: Path):
     lin = sl + np.load(E / "stars.npy").astype(np.float32)
     bk = np.array(prep["background"], np.float32)[:, None, None]
     valid = np.load(E / "valid.npy") if (E / "valid.npy").exists() else np.ones(lin.shape[1:], bool)
+    from_store.pedestal = float(np.mean(bk)) / prep["unit"]      # the sky level in sigmas, for the rim's percentages
     return (lin - bk) / prep["unit"], valid, (sl - bk) / prep["unit"]
 
 
@@ -93,21 +94,25 @@ def ring_masks(r0, r1, R=None):
     return (r >= r0) & (r < r1)
 
 
-def rim_of(S, stars):
-    """The starless level in the 3-4 px ring over the 12-18 px ring around each star: (median % on stars whose outer ring
-    is above 8 sigmas (nebula), median in sigmas on the others (sky), counts)."""
+def rim_of(S, stars, ped=0.0):
+    """The starless level in the 3-4 px ring against the 12-18 px ring around each star. ``ped``: the sky level the image's
+    working units were counted from (sigmas): the local level is the outer ring plus ped. Returns the median % of the local
+    level over all the stars (the issue's measure), the median in sigmas, and the same on the stars whose outer ring is
+    above 8 sigmas (nebula)."""
     L = S.mean(0)
     m34, mo = ring_masks(3, 4.0001, 19), ring_masks(12, 18, 19)
-    pct, sig = [], []
+    pct, sig, neb = [], [], []
     for y, x in stars:
         c = L[y - 19:y + 20, x - 19:x + 20]
         a, b = float(c[m34].mean()), float(c[mo].mean())
+        sig.append(a - b)
+        if b + ped > 0.05:
+            pct.append(100 * (a - b) / (b + ped))
         if b > 8:
-            pct.append(100 * (a - b) / b)
-        else:
-            sig.append(a - b)
-    f = lambda v: round(float(np.median(v)), 3) if v else None   # noqa: E731
-    return {"rim_pct_nebula": f(pct), "n_nebula": len(pct), "rim_sigma_sky": f(sig), "n_sky": len(sig)}
+            neb.append(100 * (a - b) / b)
+    f = lambda v: round(float(np.median(v)), 4) if v else None   # noqa: E731
+    return {"rim_pct_of_level": f(pct), "rim_sigma": f(sig), "rim_pct_nebula": f(neb), "n_stars": len(sig),
+            "n_nebula": len(neb)}
 
 
 def disc_of(S, T, stars):
@@ -177,8 +182,8 @@ def build(name: str, dev):
         y, x = stars[0]
         j = Judge(name, O, np.ones(O.shape[1:], bool), [("disque", y - 200, y + 200, x - 200, x + 200, 2)], top_pct=99.0)
         j.target = T
-        j.measure = lambda S: {"disc": disc_of(S, T, stars), "rim_target": rim_of(T, stars),
-                               **{"rim": rim_of(S, stars)}}
+        j.measure = lambda S: {"disc": disc_of(S, T, stars), "rim_target": rim_of(T, stars, 0.0),
+                               "rim": rim_of(S, stars, 0.0)}
         return j
     if name.startswith("rosette"):
         E = ROSETTE / ("05371932c85785f5" if name.endswith("deconv") else "3d5e079f33de24d5")
@@ -200,7 +205,8 @@ def build(name: str, dev):
     lev = [float(O.mean(0)[y - 19:y + 20, x - 19:x + 20][ring_masks(12, 18, 19)].mean()) for y, x in stars]
     y, x = stars[int(np.argmax(lev))]
     j = Judge(name, O, valid, [("etoile", y - 100, y + 100, x - 100, x + 100, 4)])
-    j.measure = lambda S: {"rim": rim_of(S, stars), "stars": len(stars)}
+    ped = from_store.pedestal
+    j.measure = lambda S: {"rim": rim_of(S, stars, ped), "stars": len(stars), "pedestal_sigma": round(ped, 3)}
     return j
 
 
@@ -298,9 +304,92 @@ def bench(nets, device) -> int:
     return 0
 
 
+def control(nets, device, cases=("iris", "m51", "m8", "rosette", "seestar")) -> int:
+    """The bench cases whose project is gone (only heart's remains, which stars_compare.py measures): their stored original
+    through each network, as the Stars block does on an image without half-stacks (the sky's spread as the unit), the
+    candidates against the shipped network. Light moved in the star pixels (where the shipped network took more than 3
+    sigmas), as a share of the light it took there, and the change everywhere else (mean absolute, sigmas)."""
+    from stars_compare import OUT as CMP, read_fits
+    dev = torch.device(device)
+    res = json.loads((OUT / "controle.json").read_text()) if (OUT / "controle.json").exists() else {}
+    for case in cases:
+        meta = json.loads((CMP / case / "meta.json").read_text())
+        lin = read_fits(CMP / case / "input.fits") * meta["scale"]
+        shown = np.ones(lin.shape[1:], bool)
+        bk = np.array([np.median(lin[c][::7]) for c in range(3)], np.float32)[:, None, None]
+        unit = sr.sky_unit(lin, shown)
+        O = (lin - bk) / unit
+        outs = {}
+        for n in ["shipped"] + [x for x in nets if x != "shipped"]:
+            net = get_net(n, dev)
+            outs[n] = sr.apply(net, O, dev).mean(0)
+            del net
+            if dev.type == "cuda":
+                torch.cuda.empty_cache()
+        o, base = O.mean(0), outs["shipped"]
+        star = (o - base) > 3
+        flux = float((o - base)[star].sum())
+        r = res.setdefault(case, {"shape": list(O.shape[1:]), "unit": round(float(unit), 4)})
+        for n, S in outs.items():
+            d = S - base
+            r[n] = {"more_removed_pct_of_star_light": round(100 * float(np.clip(-d, 0, None)[star].sum()) / flux, 3),
+                    "less_removed_pct_of_star_light": round(100 * float(np.clip(d, 0, None)[star].sum()) / flux, 3),
+                    "off_star_mean_abs_change_sigma": round(float(np.abs(d[~star]).mean()), 4),
+                    "off_star_median_change_sigma": round(float(np.median(d[~star])), 4)}
+        (OUT / "controle.json").write_text(json.dumps(res, indent=1))
+        log(f"{case}: {r}")
+        del outs, O, lin
+    return 0
+
+
+def valprofile(nets, device) -> int:
+    """The disc around bright stars on the bank's validation patches of the assembled fields (57_sho, 57_rgb, 58_hoo,
+    58_rgb, 62_ho, 26_rgb): NOT held out (the candidates trained on the same fields; the shipped network did not), the
+    plan's fallback to the held-out image. Median over the stars of each ring's median of (network - target), sigmas; the
+    patches without and behind the Deconvolution network apart."""
+    dev = torch.device(device)
+    done = json.loads((sb.BANK / "progress.json").read_text())["done"]
+    meta = json.loads((sb.BANK / "meta.json").read_text())
+    inp, tgt = np.load(sb.BANK / "inp.npy", mmap_mode="r"), np.load(sb.BANK / "tgt.npy", mmap_mode="r")
+    assembled = {"57_sho", "57_rgb", "58_hoo", "58_rgb", "62_ho", "26_rgb"}
+    idx = [i for i in range(done - sb.NVAL, done) if meta["field"][i] in assembled]
+    rings = [(4, 8), (8, 16), (16, 32), (32, 48), (48, 64)]
+    yy, xx = np.mgrid[-64:65, -64:65]
+    rr = np.hypot(xx, yy)
+    res = json.loads((OUT / "profil_validation.json").read_text()) if (OUT / "profil_validation.json").exists() else {}
+    for n in nets:
+        net = get_net(n, dev)
+        out = {"without": [], "behind_deconvolution": []}
+        for i in idx:
+            x = torch.from_numpy(np.asarray(inp[i], np.float32))[None].to(dev)
+            with torch.no_grad(), torch.autocast(dev.type, dtype=torch.bfloat16, enabled=dev.type == "cuda"):
+                pred = net(x).float()
+            pred, xl, tl = (sr.inv(v.float())[0].cpu().numpy() for v in (pred, x, torch.from_numpy(
+                np.asarray(tgt[i], np.float32))[None].to(dev)))
+            d = (pred - tl).mean(0)
+            lay = (xl - tl).mean(0)
+            for y, xx0 in isolated_peaks(lay, 100, 1e12, 5, win=129, crowd=1500):
+                if 70 <= y < 512 - 70 and 70 <= xx0 < 512 - 70:
+                    c = d[y - 64:y + 65, xx0 - 64:xx0 + 65]
+                    out["behind_deconvolution" if meta["deconvolved"][i] else "without"].append(
+                        [float(np.median(c[(rr >= a) & (rr < b)])) for a, b in rings])
+        r = {}
+        for k, v in out.items():
+            if v:
+                m = np.median(np.array(v), 0)
+                r[k] = {"stars": len(v), "rings_px": [f"{a}-{b}" for a, b in rings],
+                        "median_net_minus_target_sigma": [round(float(t), 4) for t in m],
+                        "disc_8_64": round(float(m[1:].mean()), 4)}
+        res[n] = r
+        (OUT / "profil_validation.json").write_text(json.dumps(res, indent=1))
+        log(f"{n}: {r}")
+        del net
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("cmd", choices=("judge", "time", "bench"))
+    ap.add_argument("cmd", choices=("judge", "time", "bench", "control", "valprofile"))
     ap.add_argument("--nets", default="shipped,A,B")
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--only", default=",".join(NAMES))
@@ -310,6 +399,10 @@ def main(argv=None) -> int:
         return judge(nets, a.device, a.only.split(","))
     if a.cmd == "time":
         return timing(nets, a.device, None)
+    if a.cmd == "valprofile":
+        return valprofile(nets, a.device)
+    if a.cmd == "control":
+        return control(nets, a.device)
     return bench(nets, a.device)
 
 
