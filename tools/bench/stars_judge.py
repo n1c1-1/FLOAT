@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -48,7 +49,31 @@ log = st.log
 RINGS = [(4, 8), (8, 16), (16, 32), (32, 48), (48, 64), (64, 80)]
 
 
+SN_PY = os.environ.get("REF_TOOL_PY", "python")      # the reference tool's own environment (onnxruntime)
+SN_TMP = ROOT.parent.parent / "_travail" / "bench_stars_nb"
+
+
+def ref_apply(O):
+    """The reference star tool on O (3, H, W in sigmas): the review stretch (offset = soft = 3, top = the image's maximum),
+    in float, the tool on the processor in its own environment, the stretch undone exactly. Returns (S, seconds)."""
+    import subprocess
+    SN_TMP.mkdir(parents=True, exist_ok=True)
+    top = float(O.max())
+    k = np.arcsinh((top + 3) / 3)
+    y = np.clip(np.arcsinh(np.clip(O + 3, 0, None) / 3) / k, 0, 1).transpose(1, 2, 0)
+    np.save(SN_TMP / "in.npy", np.ascontiguousarray(y, np.float32))
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "-1"}
+    r = subprocess.run([SN_PY, str(Path(__file__).with_name("stars_ref_worker.py")), str(SN_TMP / "in.npy"),
+                        str(SN_TMP / "out.npy")], capture_output=True, text=True, env=env, check=True)
+    out = np.load(SN_TMP / "out.npy").transpose(2, 0, 1)
+    for f in ("in.npy", "out.npy"):
+        (SN_TMP / f).unlink()
+    return (3 * np.sinh(out * k) - 3).astype(np.float32), float(r.stdout.strip().splitlines()[-1])
+
+
 def get_net(name: str, dev):
+    if name == "ref":
+        return None
     if name == "shipped":
         return sr.network(dev)
     f = sb.TRAIN / f"bank_{name}" / "best.pt"
@@ -244,9 +269,12 @@ def judge(nets, device, only) -> int:
         for n in nets:
             net = get_net(n, dev)
             t = time.time()
-            S = sr.apply(net, j.O, dev)
+            if n == "ref":
+                S, sec = ref_apply(j.O)
+            else:
+                S = sr.apply(net, j.O, dev)
+                sec = time.time() - t
             S[:, ~j.valid] = j.O[:, ~j.valid]
-            sec = time.time() - t
             res[n][name] = {**j.measure(S), "seconds": round(sec, 1), "device": device}
             export(j, "s", S, f"{n}_sans_etoiles")
             export(j, "l", j.O - S, f"{n}_etoiles")
