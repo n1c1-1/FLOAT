@@ -1941,7 +1941,7 @@ class GraphEditing:
         stage = combos.stage(blk)
         out = []
         c = self._combination(pid) if pid is not None else None
-        if c is not None and not c[4]:
+        if c is not None and self.graph_tunable(pid):
             from . import postfusion
             part, values = postfusion.split_change(c[1], values)
             if part:
@@ -2271,16 +2271,33 @@ class GraphEditing:
         return out
 
     def graph_tunable(self, pid: int) -> bool:
-        """Whether a combination's hues and intensities are graph settings (client/postfusion.py): Post mixes its
-        filters itself (the layer tree has it as a mix: no lightness of its own, nothing between it and the layer that
-        reads it), so they need no run."""
+        """Whether a combination's hues and intensities are graph settings (client/postfusion.py): its recipe is not
+        composed as lightness and colour and it is not the stars alone (the model's rule, wherever the combination is
+        used: Inspect, the recipe panel, drafts), and the layer trees of Post do not have it as a fixed image (a block
+        after it, too deep). Post's nodes take their own copy of the settings either way (``graph_copy``)."""
         q = self.view(pid)
-        if q is None or self._combination(pid) is None:
+        c = self._combination(pid) if q is not None else None
+        if c is None or not super().graph_tunable(pid):
+            return False
+        if c[3] and all(i.get("image") == "stars" for i in c[3]):
             return False
         try:
-            return self._combine_block(q) in self._mixed_blocks()
+            return self._combine_block(q) not in self._fixed_blocks()
         except (ValueError, KeyError):                   # (a workflow the graph does not draw yet)
-            return False
+            return True
+
+    def master_layer(self, pid: int) -> dict | None:
+        """The combination's master layer (model.master_layer), only when its hues and intensities are graph settings."""
+        return super().master_layer(pid) if self.graph_tunable(pid) else None
+
+    def _fixed_blocks(self) -> set:
+        """The combinations the layer trees of Post show as a fixed image (a block follows them, or they are too deep)."""
+        from . import postfusion
+        out: set = set()
+        for lay in self.post_layers():
+            tree = self.post_graph_tree(lay) if lay.get("part") in (None, "combined") else None
+            out |= {n["block"] for n in postfusion.node_paths(tree).values() if n["kind"] == "fixed"} if tree else set()
+        return out
 
     def keep_variant(self, q):
         self._do([("keep_variant", {"row": self._row(q).id})])

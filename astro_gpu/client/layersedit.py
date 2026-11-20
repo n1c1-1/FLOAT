@@ -130,6 +130,19 @@ class LayersEditor(DraftEditor):
                 f = None
             if f is not None:
                 lay["fusion"] = f
+        post_tree = getattr(self.s, "post_tree", None)
+        if post_tree is not None and lay.get("pid") is not None:        # (its layer tree, with its graph settings node by node)
+            from . import postfusion as pf
+            try:
+                copied = getattr(self.s, "graph_copy", lambda x: None)(lay) or {}
+                for k in (pf.TUNE, pf.TUNES):
+                    if copied.get(k):
+                        lay[k] = copied[k]
+                tree = post_tree(lay)
+            except Exception:  # noqa: BLE001 - not readable now: a layer without a tree
+                tree = None
+            if tree is not None:
+                lay["nest"] = tree
         return lay
 
     def slider_infos(self):
