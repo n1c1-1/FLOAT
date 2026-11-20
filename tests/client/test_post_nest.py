@@ -467,3 +467,51 @@ def test_a_draft_takes_its_statistics_from_its_own_picture_and_never_changes_the
     cold = Composer(Nested()).compose(copy.deepcopy(layers), 2).rgb
     assert np.array_equal(exact, cold)                           # the exact picture is what it was without the draft
     assert draft.shape == exact.shape and np.abs(draft - exact).max() < 0.1
+
+
+# ------------------------------------------------------------------------------------------------ a mix wired straight to Post
+def alone(nest=None, **kw):
+    """A combination wired straight to Post: its layer is the mix's own (the model gives its tree with the mix as the
+    layer's only side; Post draws it on the layer's row itself)."""
+    t = nest or tree()
+    lay = pe.new_workflow_layer(5, "H-O", True)
+    lay["fusion"] = t["sides"]["starless"]["fusion"]
+    lay["nest"] = {"kind": "layers", "block": None, "sides": {"starless": t["sides"]["starless"]}}
+    lay.update(kw)
+    return lay
+
+
+def test_a_mix_wired_straight_to_post_renders_as_the_engine_s_picture_and_as_the_same_mix_on_a_layer_of_its_own():
+    prov = Nested()
+    got = compose([alone()], prov).rgb
+    assert np.abs(got - engine_picture(output_b(prov))).max() < 3e-5
+    assert np.abs(got - compose([group(tree())], Nested()).rgb).max() < 1e-6
+
+
+def test_a_mix_wired_straight_to_post_has_its_filters_under_its_own_row_and_its_nodes_work_as_a_side_s():
+    lay = alone()
+    assert pe.is_alone(lay) and pe.is_group(lay) and pe.subs_of(lay)[:1] == ("f:Ha",)
+    f = pe.new_filter_layer("levels", lay["id"], "f:Ha/f:Ha")
+    rows = pe.rows(pe.normalize([f, lay]))
+    assert [(r.get("name"), d) for r, d in rows] == [
+        ("H-O", 0), ("Hα", 1), ("S II", 2), ("Hα", 2), ("Levels", 3), ("O III", 2), ("O III", 1)]
+    base = compose([lay]).rgb
+    off = compose([alone(shown={"f:Ha": False})]).rgb
+    assert np.abs(off - base).max() > 0.02                          # its eye acts as a side's mix's
+    assert np.abs(compose([lay, f]).rgb - base).max() < 1e-6        # (a default Levels changes nothing)
+
+
+def test_a_mix_wired_straight_to_post_keeps_its_eyes_masks_and_hues_through_a_save_and_a_load():
+    lay = alone(shown={"f:Ha": False, "f:Ha/f:SII": False}, tune={"hues": {"SII": 20.0}, "weights": {"SII": 1.5}})
+    lay["side_masks"] = {"f:OIII": pe.new_mask()}
+    back = pe.load_layers(pe.save_layers([lay]), {5})[0]
+    assert back["shown"] == lay["shown"] and back["tune"] == lay["tune"] and set(back["side_masks"]) == {"f:OIII"}
+    f = pe.new_filter_layer("levels", lay["id"], "f:Ha/f:Ha")
+    kept = pe.normalize(pe.load_layers(pe.save_layers([f, lay]), {5}))
+    assert next(x for x in kept if x["kind"] == "filter")["sub"] == "f:Ha/f:Ha"     # (before its tree is attached)
+
+
+def test_a_plain_layer_stays_plain():
+    lay = pe.new_workflow_layer(5, "Output", True)
+    assert not pe.is_group(lay) and pe.subs_of(lay) == pe.SUBS
+    assert "shown" not in pe.load_layers(pe.save_layers([lay]), {5})[0]

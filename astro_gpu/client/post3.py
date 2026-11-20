@@ -124,6 +124,7 @@ from .postengine import (
     children,
     crop_within,
     has_synth,
+    is_alone,
     is_group,
     is_pixel,
     is_synth,
@@ -293,6 +294,10 @@ def layer_slider_state(s, p, lay: dict, key: str, part, stretch: str | None = No
     if ok and (stretch or layer_stretch(lay)) == "arcsinh" and key in ARCSINH_WHY:
         return False, _(ARCSINH_WHY[key])               # a setting the Arcsinh stretch does not read
     if ok and key == "colours" and is_master(s, lay):
+        nodes = nodes_of(lay)
+        fixed = next((n for n in (nodes.get("starless"), nodes.get("")) if n is not None and n.get("kind") == "fixed"), None)
+        if fixed is not None:                            # its mix is the block's, not Post's: the reason the row's note gives
+            return False, fixed_tip(fixed)
         return False, _("The combination keeps its colours: one stretch factor for every filter")
     return ok, why
 
@@ -900,13 +905,13 @@ class LayerRow(QFrame):
         elif lay["kind"] == "sub" and lay["sub"] not in SUBS:
             if pf.root_of(lay["sub"]) == "stars":
                 self.setToolTip(_("Stretched with the stars mix: its own filters, mask and spot healing act on it "
-                                  "before the filters are mixed") + NL + _(NODE_FIXED))
+                                  "before the filters are mixed.") + NL + _(NODE_FIXED))
             else:
                 self.setToolTip(_("One filter of the combination: its own filters, mask and spot healing act on it "
-                                  "before the filters are mixed") + NL + _(NODE_FIXED))
+                                  "before the filters are mixed.") + NL + _(NODE_FIXED))
         elif lay["kind"] == "sub":
             self.setToolTip(_("The filters nested here apply to this image only, before the stars are put back on "
-                              "the starless image") + NL + _(NODE_FIXED))
+                              "the starless image.") + NL + _(NODE_FIXED))
         elif is_synth(lay):
             self.setToolTip(_("The stars of the Synthetic stars block: where the mask is white they replace the real "
                               "stars, where it is painted black the real stars show"))
@@ -2269,7 +2274,10 @@ class PostView(QWidget):
                     tree = post_tree(lay, live) if live else post_tree(lay)
                 except Exception:  # noqa: BLE001 - not readable now: a layer without a tree
                     tree = None
-            if tree is None or not (is_group(lay) or tree["kind"] == "fixed"):
+            if tree is not None and lay.get("part") is None and tree["kind"] == "mix":
+                # a combination wired straight to Post: its mix is the layer's own, the only side of the layer
+                tree = {"kind": "layers", "block": None, "sides": {"starless": tree}}
+            if tree is None or not (lay.get("part") == "combined" or tree["kind"] in ("layers", "fixed")):
                 lay.pop("nest", None)
                 lay.pop("fusion", None)
                 continue
@@ -2461,9 +2469,9 @@ class PostView(QWidget):
         if not pixel:
             return _("No layers yet")
         for lay in pixel:
-            if is_group(lay) and lay.get("visible", True) and not any((lay.get("shown") or {}).values()):
+            if is_group(lay) and not is_alone(lay) and lay.get("visible", True) and not any((lay.get("shown") or {}).values()):
                 return _("Both images of “{name}” are hidden").format(name=layer_name(lay))
-        if any(x.get("visible", True) and not (is_group(x) and not any((x.get("shown") or {}).values()))
+        if any(x.get("visible", True) and not (is_group(x) and not is_alone(x) and not any((x.get("shown") or {}).values()))
                for x in pixel):
             return _("Waiting for the layers' results")        # visible layers whose image does not exist yet
         return _("Every image layer is hidden")
@@ -3195,22 +3203,20 @@ class PostView(QWidget):
             self._collapsed -= above
         for lay, depth in rows(self.layers, self._collapsed):
             sl = self.sel is not None and self.sel[0] == lay["id"]
-            if lay["kind"] == "sub" or (sl and _sub_selected(self.sel[1])):   # a sub-layer: (its layer, it)
-                sl = sl and self.sel[1] == lay.get("sub", "layer")
-                if lay["kind"] == "sub":
-                    n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"]) + \
-                        len((mix_at(self.layer(lay["id"]) or {}, lay["sub"]) or {"fusion": {"roles": ()}})["fusion"]["roles"])
-                    row = LayerRow(self, lay, self.thumb(lay), self.mask_thumb(lay), sl and self.sel[1] == lay["sub"],
-                                   self.sel == (lay["id"], "mask_" + lay["sub"]), depth, n,
-                                   (lay["id"], lay["sub"]) in self._collapsed)
-                else:
-                    row = LayerRow(self, lay, self.thumb(lay), None, sl, False, depth)
+            if lay["kind"] == "sub":                    # a sub-layer: (its layer, it)
+                n = sum(1 for f in children(self.layers, lay["id"]) if f.get("sub") == lay["sub"]) + \
+                    len((mix_at(self.layer(lay["id"]) or {}, lay["sub"]) or {"fusion": {"roles": ()}})["fusion"]["roles"])
+                row = LayerRow(self, lay, self.thumb(lay), self.mask_thumb(lay), sl and self.sel[1] == lay["sub"],
+                               self.sel == (lay["id"], "mask_" + lay["sub"]), depth, n,
+                               (lay["id"], lay["sub"]) in self._collapsed)
                 self.lbox.addWidget(row)
                 self.rows.append(row)
                 continue
             row = LayerRow(self, lay, self.thumb(lay), self.mask_thumb(lay), sl and self.sel[1] == "layer",
                            sl and self.sel[1] == "mask", depth,
-                           len(children(self.layers, lay["id"])) + 2 * is_group(lay) if is_pixel(lay) else 0,
+                           len(children(self.layers, lay["id"])) + (
+                               len((mix_at(lay, "starless") or {"fusion": {"roles": ()}})["fusion"]["roles"])
+                               if is_alone(lay) else 2 * is_group(lay)) if is_pixel(lay) else 0,
                            lay["id"] in self._collapsed)
             self.lbox.addWidget(row)
             self.rows.append(row)
@@ -3303,8 +3309,8 @@ class PostView(QWidget):
     def dimmed(self, lay) -> bool:
         """Whether a row's eye is drawn dimmed: a node (or a filter on one) under a node whose eye is off, as the layers of a
         hidden group are; the eyes under it keep their state."""
-        own = self.layer(lay["id"]) if lay.get("id") is not None else None
-        if own is None or not is_group(own):
+        own = self.layer(lay["target"] if lay.get("kind") == "filter" else lay.get("id")) if lay.get("id") is not None else None
+        if own is None or not is_group(own):                 # (a filter is dimmed by the layer it is nested in)
             return False
         if lay["kind"] == "sub" and lay["sub"] not in SUBS and is_side(lay["sub"]):
             return not eyes_open(own, pf.parent(lay["sub"]))
@@ -3317,6 +3323,7 @@ class PostView(QWidget):
         Alt held: only that one is shown among its siblings, and the same again gives the eyes back as they were."""
         lay = self.layer(lid)
         self.push()
+        lay.setdefault("shown", {})
         if QApplication.keyboardModifiers() & Qt.AltModifier and sub in nodes_of(lay):
             sibs = sibling_paths(lay, sub)
             now = {x: lay["shown"].get(x, True) for x in sibs}
@@ -3613,7 +3620,7 @@ class PostView(QWidget):
             m.setToolTipsVisible(True)
             return m
         m.addSeparator()
-        if is_group(lay):
+        if is_group(lay) and not is_alone(lay):
             self._synth_action(m, lay)
             m.addSeparator()
         m.addAction(_("Duplicate")).triggered.connect(lambda: (self.select(lay["id"], "layer"), self.duplicate()))
@@ -3655,7 +3662,7 @@ class PostView(QWidget):
     def _synth_action(self, menu: QMenu, group):
         """"Synthetic stars", ticked when the Stars group of ``group`` holds them: a click places their block in the
         graph or takes it out; greyed with its reason on hover when the block cannot be placed."""
-        if group is None or not is_group(group):
+        if group is None or not is_group(group) or is_alone(group):
             return
         on = has_synth(self.layers, group["id"])
         why = "" if on else self.synth_problem(group)
@@ -5232,7 +5239,7 @@ class PostView(QWidget):
         if own is None:
             return False
         if is_group(own):
-            return own.get("stars_pid", own.get("pid")) is not None
+            return stars_side(own) is not None
         if own.get("kind") == "workflow" and own.get("part") is None:
             chains = getattr(self.s, "_chains", {}) or {}
             return "star_removal" in (chains.get(own["pid"]) or [])

@@ -9,12 +9,13 @@ import copy
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import QApplication
 
 sys.path.insert(0, str(Path(__file__).parent))
-from test_post_fusion_window import M27, m27, qapp  # noqa: E402,F401
+from test_post_fusion_window import M27, _render, m27, qapp  # noqa: E402,F401
 
 from astro_gpu.client import i18n  # noqa: E402
 from astro_gpu.client import postengine as pe  # noqa: E402
@@ -136,6 +137,16 @@ def test_what_is_under_a_hidden_node_is_dimmed_and_keeps_its_eyes(pv):
     assert not _row(pv, "f:Ha").eye.dimmed and not _row(pv, "f:OIII").eye.dimmed
     pv.do_undo()
     assert _g(pv)["shown"].get("f:Ha", True) is True and not _row(pv, "f:Ha/f:Ha").eye.dimmed
+
+
+def test_the_node_s_own_filters_are_dimmed_with_it_as_everything_in_a_hidden_group_is(pv):
+    lay = _g(pv)
+    ha = pe.new_filter_layer("levels", lay["id"], "f:Ha")
+    oiii = pe.new_filter_layer("levels", lay["id"], "f:OIII")
+    pv.layers[:] = pe.normalize([ha, oiii, *pv.layers])
+    pv.set_shown(lay["id"], "f:Ha", False)
+    mine = {r.lay["id"]: r for r in pv.rows if r.lay.get("kind") == "filter"}
+    assert mine[ha["id"]].eye.dimmed and mine[ha["id"]].eye.isChecked() and not mine[oiii["id"]].eye.dimmed
 
 
 def test_alt_on_an_eye_shows_that_node_alone_among_its_siblings_and_again_gives_the_eyes_back(pv, monkeypatch):
@@ -291,3 +302,78 @@ def test_the_real_context_menu_of_the_triangle_collapses_all_and_the_app_lives(p
     _settle()
     assert seen == [True]
     assert [r.depth for r in pv.rows] == [0] and QApplication.activePopupWidget() is None
+
+
+def _straight(w, view, monkeypatch):
+    """The M27's S-H-O as a layer of its own (its Output wired straight to Post: the graph of the test gives the layer its tree
+    as the S-H-O's mix)."""
+    g = _g(view)
+    mix = copy.deepcopy(view.s.post_tree(g)["sides"]["starless"])
+    lay = pe.new_workflow_layer(g["pid"], mix["title"], True)
+    real = view.s.post_tree
+
+    def tree(x, live=None):
+        if x.get("part") is None and x.get("pid") == g["pid"]:
+            return copy.deepcopy(mix)
+        return real(x, live) if live else real(x)
+    monkeypatch.setattr(view.s, "post_tree", tree)
+    monkeypatch.setattr(view, "request", lambda *a, **k: None)
+    view.layers[:] = [lay]
+    view.sel = None
+    view._collapsed = set()
+    view.rebuild()
+    return lay
+
+
+def test_a_combination_wired_straight_to_post_is_a_layer_with_its_filters_hues_and_no_note(m27, monkeypatch):
+    w, view, _before = m27
+    saved = pe.snapshot(view.layers)
+    lay = _straight(w, view, monkeypatch)
+    try:
+        assert pe.is_alone(lay) and [(r.lay.get("name"), r.depth) for r in view.rows] == [
+            (lay["name"], 0), ("S II", 1), ("Hα", 1), ("O III", 1)]
+        assert all(r.note is None for r in view.rows)                    # a mix Post makes: nothing fixed to say
+        assert view.rows[0].toggle is not None
+        view.select(lay["id"], "layer")                                   # its hues and intensities on the layer itself
+        sliders = [s.name.text() for s in view.psc.widget().findChildren(ContSlider)]
+        assert any("hue" in t for t in sliders) and any("intensity" in t for t in sliders)
+        view.set_shown(lay["id"], "f:Ha", False)                          # its filters have their eye
+        assert lay["shown"] == {"f:Ha": False} and not view.rows[2].eye.isChecked()
+    finally:
+        monkeypatch.undo()
+        view.layers[:] = pe.load_layers(pe.save_layers(saved), {p.pid for p in view.s.paths})
+        view.sel = None
+        view.rebuild()
+
+
+def test_the_owner_s_m27_straight_to_post_gives_the_same_picture_as_its_mix_on_a_combine_layers_layer(m27, monkeypatch):
+    """Nothing lost: the mix on a layer of its own (nothing but it) is the picture the Combine layers layer over it makes
+    (the one validated against the Output as the block made it)."""
+    w, view, _before = m27
+    saved = pe.snapshot(view.layers)
+    master = copy.deepcopy(_g(view))
+    master.update(stars_pid=None, shown={"starless": True, "stars": True})
+    lay = _straight(w, view, monkeypatch)
+    try:
+        mixed = _render(view).rgb
+        view.layers[:] = [master]
+        view.rebuild()
+        want = _render(view).rgb
+        assert mixed.shape == want.shape and np.abs(mixed.astype(float) - want.astype(float)).max() == 0
+    finally:
+        monkeypatch.undo()
+        view.layers[:] = pe.load_layers(pe.save_layers(saved), {p.pid for p in view.s.paths})
+        view.sel = None
+        view.rebuild()
+
+
+def test_choosing_a_child_row_leaves_its_layer_s_row_as_it_was(pv):
+    """The layer's row kept its triangle and its thumbnails when one of its images or filters was chosen (main too)."""
+    lay = _g(pv)
+    pv.select(lay["id"], "layer")
+    first = pv.rows[0]
+    was = (first.toggle is not None, first.m is not None, first.t.pos().x())
+    for what in ("starless", "stars", "f:Ha", "f:Ha/f:OIII"):
+        pv.select(lay["id"], what)
+        top = pv.rows[0]
+        assert (top.toggle is not None, top.m is not None, top.t.pos().x()) == was, what

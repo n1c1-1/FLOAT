@@ -2123,10 +2123,10 @@ class GraphEditing:
         blend, stretch and sliders, the hues and intensities of the combination it shows by its filters (``tune``) and
         of each combination nested in it (``tunes``, by the node's path: client/postfusion.py)."""
         from . import postfusion
-        if not lay or lay.get("kind") != "workflow" or lay.get("part") != "combined":
+        if not lay or lay.get("kind") != "workflow" or lay.get("part") not in (None, "combined"):
             return None
         out: dict = {}
-        bid = self._layers_block_of(lay)
+        bid = self._layers_block_of(lay) if lay.get("part") == "combined" else None
         if bid is not None:
             out.update(self.layers_graph(bid))
         tree = self.post_graph_tree(lay)
@@ -2135,7 +2135,7 @@ class GraphEditing:
             if node["kind"] != "mix":
                 continue
             if path in ("", "starless"):
-                if lay.get("starless") == "output":
+                if lay.get("starless") == "output" or lay.get("part") is None:
                     out[postfusion.TUNE] = self.block_graph(node["block"])
             else:
                 tunes[path] = self.block_graph(node["block"])
@@ -2247,13 +2247,18 @@ class GraphEditing:
         changed = False
         for v in (getattr(self.p, "post", None) or {}).get("versions") or []:
             for lay in v.get("layers") or []:
-                if lay.get("kind") != "workflow" or lay.get("part") != "combined":
+                if lay.get("kind") != "workflow" or lay.get("part") not in (None, "combined"):
                     continue
                 tree = self.post_graph_tree(lay)
                 if tree is not None:
                     nodes = postfusion.node_paths(tree)
                     changed |= postfusion.drop_tunes(lay, [p for p, n in nodes.items() if n["kind"] == "mix"])
                     changed |= postfusion.prune(v.get("layers") or [], lay, nodes)
+                    if lay.get("part") is None:                  # (its side is the layer itself: a filter goes to the layer)
+                        for f in v.get("layers") or []:
+                            if f.get("kind") == "filter" and f.get("target") == lay.get("id") and f.get("sub") in postfusion.SIDES:
+                                f["sub"] = None
+                                changed = True
         return changed
 
     def _mixed_blocks(self) -> set:
@@ -2261,7 +2266,7 @@ class GraphEditing:
         from . import postfusion
         out: set = set()
         for lay in self.post_layers():
-            tree = self.post_graph_tree(lay) if lay.get("part") == "combined" else None
+            tree = self.post_graph_tree(lay) if lay.get("part") in (None, "combined") else None
             out |= {n["block"] for n in postfusion.node_paths(tree).values() if n["kind"] == "mix"} if tree else set()
         return out
 

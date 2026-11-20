@@ -1037,7 +1037,7 @@ def stars_side(lay: dict):
     """The workflow whose stars a Combine layers layer puts back: its stars side's (``stars_pid``: a stars row, or a
     combination of stars), else its own; None when the side is unwired. This is the workflow a Synthetic stars block
     of the layer lives in."""
-    return lay.get("stars_pid", lay.get("pid"))
+    return None if lay.get("part") is None else lay.get("stars_pid", lay.get("pid"))
 
 
 def with_synth_rows(layers: list[dict], wanted: dict[int, str]) -> list[dict]:
@@ -1182,7 +1182,7 @@ def source_ids(lay: dict) -> list:
     if is_group(lay):
         shown = lay.get("shown") or {}
         subs = [x for x in ("starless", "stars") if shown.get(x, True)]
-        if lay.get("stars_pid", lay["pid"]) is None and "stars" in subs:
+        if stars_side(lay) is None and "stars" in subs:
             subs.remove("stars")
         return [source_id(sub_layer(lay, x)) for x in subs]
     return [source_id(lay)]
@@ -1194,7 +1194,7 @@ def side_layers(lay: dict) -> list:
     if is_group(lay):
         shown = lay.get("shown") or {}
         subs = [x for x in ("starless", "stars") if shown.get(x, True)]
-        if lay.get("stars_pid", lay["pid"]) is None and "stars" in subs:
+        if stars_side(lay) is None and "stars" in subs:
             subs.remove("stars")
         return [(x, sub_layer(lay, x)) for x in subs]
     return [(None, lay)]
@@ -1224,9 +1224,18 @@ SUB_NAMES = {"starless": "Starless image", "stars": "Stars", "real": "Real stars
 SUB_ROWS = ("stars", "real", "starless")
 
 
+def is_alone(lay: dict) -> bool:
+    """A combination wired straight to Post: its layer is the mix's own (the layer tree says so, ``NEST``: a layer with its
+    mix as its only side, which Post draws on the layer's row itself). Its picture is the mix's, as a Combine layers
+    layer with no stars side makes it."""
+    nest = lay.get(NEST)
+    return lay.get("kind") == "workflow" and lay.get("part") is None and "starless" not in lay         and isinstance(nest, dict) and nest.get("kind") == "layers"      # (an image of a Combine layers layer has its "starless")
+
+
 def is_group(lay: dict) -> bool:
-    """A Stars and background layer: its two images are sub-layers, each with its own filters."""
-    return lay.get("kind") == "workflow" and lay.get("part") == "combined"
+    """A Stars and background layer: its two images are sub-layers, each with its own filters; also a combination's
+    layer wired straight to Post (``is_alone``: the mix alone)."""
+    return lay.get("kind") == "workflow" and (lay.get("part") == "combined" or is_alone(lay))
 
 
 #: the prefix of a combination's filter as a sub-image of its master layer ("f:SII"; postfusion.child)
@@ -1286,7 +1295,7 @@ def is_side(sub) -> bool:
 
 def subs_of(lay: dict) -> tuple[str, ...]:
     """The sub-images of a Combine layers layer: its two, and every node of its tree under them."""
-    return SUBS + tuple(p for p in nodes_of(lay) if p not in ("", *SUBS))
+    return (() if is_alone(lay) else SUBS) + tuple(p for p in nodes_of(lay) if p not in ("", *SUBS))
 
 
 def sub_name(lay: dict, sub: str) -> str:
@@ -1406,9 +1415,14 @@ def normalize(layers: list[dict]) -> list[dict]:
     The list is top first."""
     ids = {lay["id"] for lay in layers if is_pixel(lay)}
     groups = {lay["id"]: lay for lay in layers if is_group(lay)}
+    # a combination's layer wired straight to Post holds its filters' nodes before its tree is attached (as saved)
+    waiting = {lay["id"] for lay in layers if lay.get("kind") == "workflow" and lay.get("part") is None
+               and NEST not in lay}
     for lay in layers:
         if lay["kind"] == "filter" and lay.get("target") not in ids:
             lay["target"] = None
+        if lay["kind"] == "filter" and lay.get("target") in waiting and is_side(lay.get("sub"))                 and lay["sub"] not in SUBS:
+            continue
         if lay["kind"] == "filter" and (lay.get("target") not in groups or not is_side(lay.get("sub"))):
             lay["sub"] = None
         elif lay["kind"] == "filter" and lay.get("sub") not in SUBS:
@@ -1451,7 +1465,9 @@ def rows(layers: list[dict], collapsed=()) -> list[tuple[dict, int]]:
         if lay["id"] in collapsed:
             continue
         out += [(k, 1) for k in kids if not k.get("sub")]
-        if is_group(lay):
+        if is_alone(lay):                                    # its mix is the layer's own: its filters under the row
+            out += _node_rows(lay, kids, "starless", 1, collapsed)
+        elif is_group(lay):
             for sub in SUBS:
                 out.append((sub_row(lay, sub), 1))
                 if (lay["id"], sub) in collapsed:
@@ -1604,9 +1620,11 @@ def load_layers(raw, alive: set[int]) -> list[dict]:
                 lay["shown"] = {k: bool(shown.get(k, True)) for k in SUBS}
                 if "real" in shown:                              # the real stars' eye, in a Stars group (#93)
                     lay["shown"]["real"] = bool(shown["real"])
+            if lay.get("part") in ("combined", None):
+                shown = d.get("shown") if isinstance(d.get("shown"), dict) else {}
                 for k, v in shown.items():                       # the eyes of the nodes of the layer's tree
                     if pf.is_path(k) and k not in SUBS:
-                        lay["shown"][k] = bool(v)
+                        lay.setdefault("shown", {})[k] = bool(v)
                 tune = d.get("tune") if isinstance(d.get("tune"), dict) else None
                 if tune is not None:                             # a combination's own hues and intensities
                     lay["tune"] = {k: {str(r): _num(v, 0.0) for r, v in (tune.get(k) or {}).items()}
@@ -2250,7 +2268,7 @@ class Composer(MixRendering):
     def _shown(self, lay: dict) -> list[str]:
         """A Stars and background layer's images put together, the starless image first (a side whose result cannot
         be read is left out: the other one is shown)."""
-        empty = lay.get("stars_pid", lay.get("pid")) is None            # its stars side has no workflow (#165)
+        empty = stars_side(lay) is None                                 # its stars side has no workflow (#165)
         return [sub for sub in reversed(SUBS) if (lay.get("shown") or {}).get(sub, True) and not (empty and sub == "stars")
                 and self.provider.readable(sub_layer(lay, sub))]
 
@@ -2259,7 +2277,7 @@ class Composer(MixRendering):
         three modes as Post's)."""
         if not got:
             return np.zeros((*hw, 3), np.float32)
-        return got[0] if len(got) == 1 else self.blend(lay["blend"], got[0], got[1])
+        return got[0] if len(got) == 1 else self.blend(lay.get("blend") or BLENDS[0], got[0], got[1])
 
     def layer_rgb(self, lay: dict, level: int, abox, canvas: Canvas, cache: bool = True, draft: bool = False,
                   stop=None) -> np.ndarray:
@@ -2299,7 +2317,7 @@ class Composer(MixRendering):
         block)."""
         if is_group(lay):
             side = sub_layer(lay, "stars")
-            if lay.get("stars_pid", lay.get("pid")) is None or not self.provider.readable(side):
+            if stars_side(lay) is None or not self.provider.readable(side):
                 return None
         elif lay.get("kind") == "workflow" and lay.get("part") is None:
             side = dict(lay, part="stars")
