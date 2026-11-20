@@ -846,8 +846,9 @@ class LayerRow(QFrame):
             self.toggle.setStyleSheet("QToolButton { border: none; padding: 0; }")
             self.toggle.clicked.connect(lambda: panel.toggle_children(key))
             self.toggle.setContextMenuPolicy(Qt.ActionsContextMenu)     # as a group's triangle in the reference editor
-            self.toggle.addAction(_("Expand all")).triggered.connect(lambda: panel.fold_all(False))
-            self.toggle.addAction(_("Collapse all")).triggered.connect(lambda: panel.fold_all(True))
+            # (the panel is built again by it, and this very button with it: after the menu's own signal, never inside it)
+            self.toggle.addAction(_("Expand all")).triggered.connect(lambda: QTimer.singleShot(0, lambda: panel.fold_all(False)))
+            self.toggle.addAction(_("Collapse all")).triggered.connect(lambda: QTimer.singleShot(0, lambda: panel.fold_all(True)))
             self.toggle.setToolTip(_("Show / hide what is under it") + NL +
                                    _("Alt: it and everything nested in it · Ctrl: every row of the panel"))
             h.addWidget(self.toggle)

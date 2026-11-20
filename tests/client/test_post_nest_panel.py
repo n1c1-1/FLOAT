@@ -65,6 +65,14 @@ def pv(m27, monkeypatch):
     view.rebuild()
 
 
+def _settle():
+    """What the event loop does after a menu's signal: the deferred calls, then the widgets deleted later."""
+    from PySide6.QtCore import QEvent
+    for _ in range(3):
+        QApplication.processEvents()
+        QApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
 def _g(pv):
     return next(x for x in pv.layers if pe.is_group(x) and x.get("starless") == "output")
 
@@ -100,11 +108,15 @@ def test_the_triangle_shuts_one_node_alt_it_and_what_is_nested_ctrl_every_row_an
     texts = [a.text() for a in row.toggle.actions()]
     assert texts == ["Expand all", "Collapse all"]
     row.toggle.actions()[1].trigger()
+    assert [r.depth for r in pv.rows] != [0]                          # not inside the menu's own signal: its button lives on
+    assert row.toggle.parent() is not None
+    _settle()
     assert [r.depth for r in pv.rows] == [0]
     pv.rebuild()
     pv._collapsed = {(lay["id"], "f:Ha")}
     pv.rebuild()
     next(r for r in pv.rows if r.lay.get("kind") == "sub").toggle.actions()[0].trigger()
+    _settle()
     assert pv._collapsed == set()
     i18n.set_language("fr")
     try:
@@ -253,3 +265,29 @@ def test_a_filter_dropped_on_a_node_row_goes_to_the_top_of_its_filters_shift_to_
     d = pv.drop_at(b, cx, cy)
     assert d["sub"] == "f:Ha/f:OIII" and d["index"] == len([c for c in pe.children(pv.layers, lay["id"]) if c is not b])
     assert holder is not None
+
+
+def test_the_real_context_menu_of_the_triangle_collapses_all_and_the_app_lives(pv):
+    """The menu is the real popup (a nested loop), its action clicked as a user does: the panel is built again after
+    its signal, the popup and its button are not deleted inside it."""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QContextMenuEvent
+    from PySide6.QtTest import QTest
+    row = _row(pv, "starless")
+    btn = row.toggle
+    btn.show()
+    seen = []
+
+    def click():
+        menu = QApplication.activePopupWidget()
+        seen.append(menu is not None)
+        if menu is None:
+            return
+        menu.setActiveAction(next(a for a in menu.actions() if a.text() == "Collapse all"))
+        QTest.keyClick(menu, Qt.Key_Return)
+    QTimer.singleShot(100, click)
+    QTimer.singleShot(3000, lambda: QApplication.activePopupWidget() and QApplication.activePopupWidget().close())
+    QApplication.sendEvent(btn, QContextMenuEvent(QContextMenuEvent.Mouse, QPoint(3, 3), btn.mapToGlobal(QPoint(3, 3))))
+    _settle()
+    assert seen == [True]
+    assert [r.depth for r in pv.rows] == [0] and QApplication.activePopupWidget() is None
