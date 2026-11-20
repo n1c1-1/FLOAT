@@ -26,13 +26,16 @@ import numpy as np
 #: the clipping of a mesh: iterations, sigmas; the share of the scatter beyond which the mode falls back to the median
 CLIP_ITER, CLIP_SIGMA, MODE_TOLERANCE = 3, 3.0, 0.3
 AMOUNT_MAX = 0.95
+#: the meshes (pixels) under which the median of a mesh is taken by one sort of them all, over numpy's one mesh after the other
+SORT_BELOW = 16384
 
 
 def _nanmedian(a: np.ndarray) -> np.ndarray:
-    """``np.nanmedian(a, axis=2, keepdims=True)`` for meshes of under 600 pixels, the same values: numpy takes them
-    through masked arrays there (a draft's meshes of 8 px: 35 ms of its 52 ms); here a sort, NaN last, and the middle
-    one or the mean of the middle two of the values that are not NaN."""
-    if a.shape[2] >= 600:
+    """``np.nanmedian(a, axis=2, keepdims=True)`` for meshes of under ``SORT_BELOW`` pixels, the same values: numpy takes
+    them one mesh after the other (11 000 calls of a draft's 32 px meshes: 80 ms of a 3 Mpx channel's; the sort of all of
+    them at once, 27 ms, as fast as numpy's from the 16 k pixel meshes up, measured); here a sort, NaN last, and the
+    middle one or the mean of the middle two of the values that are not NaN."""
+    if a.shape[2] >= SORT_BELOW:
         return np.nanmedian(a, axis=2, keepdims=True)
     s = np.sort(a, axis=2)
     n = np.count_nonzero(~np.isnan(a), axis=2)[..., None]
