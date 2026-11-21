@@ -49,6 +49,7 @@
  "{} matched to {} on its pixels between {} and {}: {} x + {} ({} pixels)": "{} ajusté sur {} sur ses pixels entre {} et {} : {} x + {} ({} pixels)",
  "{} equalised to {} (its median and its spread): {} x + {}": "{} égalisé sur {} (sa médiane et son étendue) : {} x + {}",
  "{}'s continuum: {} times {}, measured on {} stars": "continuum de {} : {} fois {}, mesuré sur {} étoiles",
+ "{}: detecting the stars of {} to measure the continuum": "{} : détection des étoiles de {} pour mesurer le continuum",
  "{}'s continuum: {} times {}, as the recipe says": "continuum de {} : {} fois {}, comme le dit la recette",
  "too few isolated stars to measure the star shape: the image is left as it is": "trop peu d'étoiles isolées pour mesurer la forme des étoiles : l'image est laissée telle quelle",
  "adapted to the image in {} steps ({} min), loss {}": "adapté à l'image en {} pas ({} min), perte {}",

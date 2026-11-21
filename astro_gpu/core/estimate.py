@@ -90,6 +90,14 @@ DENOISE_ADAPT_STEPS = {"short": 500, "long": 4000}
 DENOISE_PASSES = 4
 
 
+#: The continuum measurement of a combination recipe (stages/combine.continuum_scale: the detection of the stars, then
+#: their photometry) takes this many seconds per Mpx of the grid, on the processor in every run (measured on 12.1 Mpx of
+#: real star images, whole image: 12 s, 21 November 2026, issue #185; an image of stars alone, with no sky, takes much
+#: longer: its detection threshold falls to 0, which the history of the machine learns). In the units of a combination:
+#: the same Mpx as its own composition, times this many (the ratio to the reference's seconds per Mpx).
+CONTINUUM_SECONDS_PER_MPX = 1.0
+
+
 @dataclass
 class Facts:
     """What the units of a workflow's stages are made of."""
@@ -101,6 +109,7 @@ class Facts:
     grid_mpx: float = 6384 * 4272 / 1e6
     iterations: int = 0              # denoise: adaptation steps (0: the pretrained network as it is)
     passes: int = DENOISE_PASSES     # denoise: passes of the network over the image
+    continuum_mpx: float = 0.0       # a combination: the Mpx whose stars its continuum is measured on (0: no such step)
 
 
 HEART_FACTS = Facts()
@@ -124,6 +133,8 @@ def units(stage: str, f: Facts) -> float:
         return f.lights * f.mpx * f.scale ** 2
     if stage == "denoise":
         return float(f.iterations) + DENOISE_MPX_UNITS * f.grid_mpx * f.passes
+    if stage.startswith("combine_"):
+        return f.grid_mpx + CONTINUUM_SECONDS_PER_MPX / (HEART["combine"][0] / HEART_FACTS.grid_mpx) * f.continuum_mpx
     return f.grid_mpx
 
 
@@ -409,6 +420,15 @@ def facts(keys: Any, wf: Any, store: Any = None) -> Facts:
         mpx = _sensor_mpx(str(keys.project.abspath(path)) if hasattr(keys.project, "abspath") else str(path))
         if mpx:
             f.mpx, f.scale, f.grid_mpx = mpx, 1.0, mpx
+    fusion = (getattr(w, "source", None) or {}).get("fusion")
+    if fusion:                      # a combination whose recipe measures a continuum on the stars (issue #185)
+        from ..stages import recipes
+        try:
+            steps = recipes.recipe_of(fusion)["steps"]
+        except (KeyError, ValueError, recipes.RecipeError):
+            steps = []
+        if any(s.get("op") == "continuum_subtract" and s.get("scale") == "stars" for s in steps):
+            f.continuum_mpx = f.grid_mpx
     return f
 
 

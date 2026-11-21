@@ -333,6 +333,43 @@ def test_hargb_takes_the_continuum_off_the_halpha_by_the_stars_and_adds_the_line
     assert said[-1]["continuum_scale"] == 0.08 and np.load(out2 / "drz_full.npy").shape == rgb.shape
 
 
+def test_the_continuum_measurement_says_what_it_does_while_it_runs(tmp_path):
+    """The detection of the stars takes seconds, minutes on an image of stars alone: the progress line and the log
+    name the step, the channel, then the number of stars (issue #185: the bar stayed on "channel R" with nothing
+    written)."""
+    H = W = 320
+    pts, stars = _star_field(H, W)
+    img = {"R": 0.01 + stars, "G": 0.02 + 0.9 * stars, "B": 0.005 + 0.7 * stars, "Ha": 0.002 + 0.08 * stars}
+    rng = np.random.default_rng(2)
+    for r, a in img.items():
+        _output(tmp_path / r, np.repeat((a + rng.normal(0, 0.0003, (H, W)).astype(np.float32))[None], 3, 0))
+    ins = [{"role": r, "channel": "L", "pid": n, "dir": str(tmp_path / r)} for n, r in enumerate(img)]
+    said, bar = [], []
+    _run(tmp_path, C.CombineRecipe, C.RecipeParams(inputs=ins, recipe=R.available()[0]["hargb"]), "bar", said, bar)
+    i = bar.index("Ha: measuring the continuum on the stars")
+    assert bar[i - 1].startswith("channel ") and bar[i + 1].endswith("objects found")
+    assert bar[i + 2].startswith("Ha: measuring the continuum on ") and bar[i + 2].endswith(" stars")
+    assert said.index("Ha: detecting the stars of R to measure the continuum") < said.index(
+        next(m for m in said if isinstance(m, str) and "'s continuum" in m))
+
+
+def test_the_estimate_of_a_hargb_block_counts_its_continuum_measurement(tmp_path, nights):  # noqa: F811
+    """The facts of a workflow whose recipe measures the continuum on the stars carry the Mpx of that step (issue
+    #185); a recipe without one carries none, and the first costs more."""
+    from astro_gpu.core import estimate as est
+    p, o = _channels(tmp_path, nights)
+    h = p.add_workflow("HaRGB", CLASSIC)
+    h.source = api.combination_source("hargb", [{"pid": 1, "role": r} for r in ("R", "G", "B", "Ha")])
+    o2 = p.add_workflow("HOO", CLASSIC)
+    o2.source = api.combination_source("hoo", [{"pid": 1, "role": "Ha"}, {"pid": 1, "role": "OIII"}])
+    p.validate()
+    k = Keys(p)
+    fh, fo = est.facts(k, h.id), est.facts(k, o2.id)
+    assert fh.continuum_mpx == fh.grid_mpx > 0 and fo.continuum_mpx == 0.0
+    assert (est.estimate("combine_recipe", fh, False, {}).seconds
+            > est.estimate("combine_recipe", fo, False, {}).seconds)
+
+
 def test_too_few_stars_for_the_continuum_say_so(tmp_path):
     ch, _ = _sky_field({"R": 3.0, "G": 1.0, "B": 2.0, "Ha": 2.5}, {"R": 0.03, "G": 0.03, "B": 0.03, "Ha": 0.4})
     for r, a in ch.items():
