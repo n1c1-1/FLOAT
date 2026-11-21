@@ -420,13 +420,20 @@ def node_earlier(s, node, kind: str = "") -> list[tuple[str, str]]:
 
 
 def earlier_nodes_of(s, pids) -> list:
-    """The blocks of these workflows, in the graph's order, that are up to date with a result of an earlier version of
-    their method (``node_earlier``): what Post offers to recompute under a layer it cannot read."""
+    """What Post offers to recompute under a layer it cannot read: in each of these workflows, the last block of its
+    chain whose result is of an earlier version of its method (``node_earlier``), the one whose result the layer reads;
+    recomputing it computes again what is made from it, and not the blocks before it, which the layer does not read.
+    In the graph's order, each block once."""
     want = set(pids)
     try:
         bm = s.block_map
-        return [n for n in bm.nodes if bm.state(n) == "done" and want & {getattr(q, "pid", None) for q in n.paths}
-                and node_earlier(s, n)]
+        last: dict = {}
+        for n in bm.nodes:
+            if bm.state(n) == "done" and node_earlier(s, n):
+                for q in n.paths:
+                    if getattr(q, "pid", None) in want:
+                        last[q.pid] = n
+        return [n for n in bm.nodes if any(n is x for x in last.values())]
     except (KeyError, ValueError, AttributeError, IndexError, TypeError):
         return []
 

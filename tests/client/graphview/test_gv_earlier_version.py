@@ -246,12 +246,14 @@ def test_the_blocks_of_an_earlier_version_of_some_workflows_are_found_in_the_gra
             "color": api.StageState("done", "", "k3")}
     p1, p2 = SimpleNamespace(pid=1, params={}, opts={}), SimpleNamespace(pid=2, params={}, opts={})
     node = lambda key, q: SimpleNamespace(key=key, ref=key, paths=[q], sid=None, cut=False, grey="")  # noqa: E731
-    nodes = [node("fond", p1), node("couleur", p1), node("fond", p2)]
+    info["astrometry"] = api.StageState("done", "", "k4", earlier=("1", "2"))
+    nodes = [node("fond", p1), node("couleur", p1), node("fond", p2), node("astrometrie", p1)]
     bm = SimpleNamespace(nodes=nodes, state=lambda n: "done", session_stages=lambda q, sid: None)
     m = SimpleNamespace(state_info=lambda q, st: info.get(st), state=lambda q, st: "done", block_map=bm,
                         all_stages=lambda q: list(info))
-    assert earlier_nodes_of(m, {1}) == [nodes[0]] and earlier_nodes_of(m, {2}) == [nodes[2]]
-    assert earlier_nodes_of(m, {1, 2}) == [nodes[0], nodes[2]] and earlier_nodes_of(m, set()) == []
+    # workflow 1 has two blocks of an earlier version: the last of its chain, the one its layer reads
+    assert earlier_nodes_of(m, {1}) == [nodes[3]] and earlier_nodes_of(m, {2}) == [nodes[2]]
+    assert earlier_nodes_of(m, {1, 2}) == [nodes[2], nodes[3]] and earlier_nodes_of(m, set()) == []
 
 
 def test_recompute_of_several_blocks_is_one_plan_in_one_window(qapp):
