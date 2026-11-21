@@ -22,8 +22,9 @@ from tests.test_blocks43 import CLASSIC, FULL, _output, _Project, _split, _star,
 SHO = C.CombineSHO.ports
 
 
-def _run(tmp_path, cls, params, name="out", said=None):
-    """Run a combination's stage into ``tmp_path / name``; ``said``: a list given its log lines, then its metrics."""
+def _run(tmp_path, cls, params, name="out", said=None, bar=None):
+    """Run a combination's stage into ``tmp_path / name``; ``said``: a list given its log lines, then its metrics;
+    ``bar``: a list given the messages of its progress line."""
     out = tmp_path / name
     pr = _Project(tmp_path, {cls.name: out}, [cls.name])
     st = cls()
@@ -31,6 +32,9 @@ def _run(tmp_path, cls, params, name="out", said=None):
     if said is not None:
         log = ctx.log
         ctx.log = lambda msg, level="info": (said.append(msg), log(msg, level))[1]
+    if bar is not None:
+        progress = ctx.progress
+        ctx.progress = lambda frac, msg="", force=False: (bar.append(msg), progress(frac, msg, force))[1]
     st.run(ctx, params)
     if said is not None:
         said.append(ctx.metrics)

@@ -502,7 +502,7 @@ APERTURE = 1.5
 
 
 def continuum_scale(line: np.ndarray, cont: np.ndarray, valid: np.ndarray, top_line: float,
-                    top_cont: float) -> tuple[float, int]:
+                    top_cont: float, say=None) -> tuple[float, int]:
     """(the scale, the stars used) of a continuum subtraction (module docstring): the median, over the field's stars,
     of their flux in the line image over their flux in the continuum image. The stars are found on the continuum
     image (SExtractor's detection, ``sep``, at STAR_SIGMA times the sky's noise; round, unflagged); each is measured
@@ -511,7 +511,9 @@ def continuum_scale(line: np.ndarray, cont: np.ndarray, valid: np.ndarray, top_l
     it holds cancels in the ratio), its local sky the mean of an annulus from 1.25 to 2 radii (the nebula under the
     star taken off, which a line image has; narrow, so that the nebula's curvature biases it least: a wider one, 1.5
     to 3 radii, gave 3 % less on a synthetic nebula). Left out: a star with a neighbour within its annulus, one whose brightest pixel is above ``top_*`` in either image (saturated), one under 10 times its
-    flux error."""
+    flux error. ``say(step, n)``, when given, is told when the detection is done (``"detected"``, the objects found) and
+    before the photometry (``"measuring"``, the stars kept): the stretches of seconds, or minutes on an image of stars
+    alone, where nothing else would move."""
     import sep
 
     from ..core.imgutil import sep_extract
@@ -520,6 +522,8 @@ def continuum_scale(line: np.ndarray, cont: np.ndarray, valid: np.ndarray, top_l
     ln = np.ascontiguousarray(np.where(bad, 0, line), np.float32)
     bkg = sep.Background(c, mask=bad, bw=64, bh=64)
     o = sep_extract(c - bkg.back(), STAR_SIGMA, err=bkg.globalrms, minarea=4, mask=bad, deblend_cont=0.005)
+    if say:
+        say("detected", len(o))
     o = o[(o["flag"] == 0) & (o["b"] >= STAR_ROUND * o["a"])]
     if len(o) < MIN_STARS:
         raise StageError(f"the continuum's scale needs stars: {len(o)} found on the continuum image (at least "
@@ -542,6 +546,8 @@ def continuum_scale(line: np.ndarray, cont: np.ndarray, valid: np.ndarray, top_l
     if len(x) < MIN_STARS:
         raise StageError(f"the continuum's scale needs stars: {len(x)} isolated and unsaturated (at least "
                          f"{MIN_STARS}); write the scale in the recipe")
+    if say:
+        say("measuring", len(x))
     rms_l = float(sep.Background(ln, mask=bad, bw=64, bh=64).globalrms)
     fc, ec, _ = sep.sum_circle(c, x, y, r, err=float(bkg.globalrms), bkgann=(1.25 * r, 2 * r))
     fl, el, _ = sep.sum_circle(ln, x, y, r, err=rms_l, bkgann=(1.25 * r, 2 * r))
@@ -948,8 +954,17 @@ class Combination(Stage):
                 line, cont = step["line"], step["continuum"]
                 full = {i["role"]: float(i.get("full_scale") or 1.0) for i in inputs}
                 if step["scale"] == "stars":
+                    # the detection of the stars takes seconds, minutes on an image of stars alone (no sky: its
+                    # threshold falls to 0): the bar and the log say what is going on (issue #185)
+                    ctx.progress(0.6, f"{line}: measuring the continuum on the stars", force=True)
+                    ctx.log(f"{line}: detecting the stars of {cont} to measure the continuum")
+
+                    def say(what, n, line=line):
+                        ctx.progress(0.8 if what == "detected" else 0.85,
+                                     f"{line}: {n} objects found" if what == "detected"
+                                     else f"{line}: measuring the continuum on {n} stars", force=True)
                     mu, n = continuum_scale(chans[line], chans[cont], valid, MATCH_HIGH * full[line],
-                                            MATCH_HIGH * full[cont])
+                                            MATCH_HIGH * full[cont], say)
                     ctx.log(f"{line}'s continuum: {cont} times {mu:.4g}, measured on {n} stars")
                     ctx.metric("continuum_stars", n)
                 else:

@@ -18,6 +18,18 @@ def test_the_blocks_default_costs_match_the_measured_ones(stage, actual):
     assert seconds(stage) == pytest.approx(actual, rel=0.15)
 
 
+def test_a_recipe_that_measures_a_continuum_on_the_stars_counts_that_step():
+    """The detection of the stars took 12 s of a grid of 12.1 Mpx on the processor (issue #185); the block was announced
+    as "<= 1 min" while it took 2.7 min on stars alone. Its estimate is the composition's plus that measure."""
+    plain = seconds("combine_recipe")
+    f = est.Facts(mpx=12.1, grid_mpx=12.1, continuum_mpx=12.1)
+    assert seconds("combine_recipe", f) - plain == pytest.approx(12.0, rel=0.25)
+    assert seconds("combine_recipe", f, gpu=True) > seconds("combine_recipe", GRID, gpu=True)
+    # with a history the rate is per unit: a run of both kinds teaches the same rate
+    h = {"combine_recipe": [[30.0, est.units("combine_recipe", f), "cpu"]]}
+    assert est.estimate("combine_recipe", f, gpu=False, history=h).seconds == pytest.approx(30.0)
+
+
 def test_gradient_is_under_a_second():
     assert seconds("gradient") < 1.0
 
