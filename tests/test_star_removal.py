@@ -373,6 +373,17 @@ def test_small_stars_is_the_share_of_the_stars_removed_the_smallest_first():
     assert (z <= y + 1e-6).all()                                                    # nothing is added: no disc
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no graphics card")
+def test_small_stars_runs_on_the_graphics_card_as_on_the_processor():
+    """Post renders on the graphics card when there is one: the removal's work tables are made where the image is
+    (they were on the processor: the slider failed on any image, cuda and cpu), and the result is the processor's."""
+    from astro_gpu.render.stars import fade_small_stars
+    y, _, _ = _graded_field()
+    z = fade_small_stars(y.cuda(), 0.5, 3.0)
+    assert z.is_cuda
+    assert torch.allclose(z.cpu(), fade_small_stars(y, 0.5, 3.0), atol=1e-5)
+
+
 def test_small_stars_share_is_the_same_on_a_dense_field():
     """M27 (a dense field): touching faint stars, all above the stars' level, are ranked as the sparse ones are: the
     share removed is the setting, the large star among them stays."""
