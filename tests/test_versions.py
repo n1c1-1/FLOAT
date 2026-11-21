@@ -2,7 +2,7 @@
 
 A result exists: it is used. A change of setting makes a block recompute; a new version of its method does not: the
 result keeps its key, stays the block's result for the blocks after it and for Post, and says "computed with an earlier
-version" (from, to). The user decides: "Recompute (current version)" recomputes the block with today's code and, as
+version" (from, to). The user decides: "Recompute" recomputes the block with today's code and, as
 for a setting change, what follows it. The new result takes the earlier one's place under the same key: each result
 records the stamp of the results it read, and a block made from a result recomputed since is to recompute (an
 interrupted recompute too). A result recorded before the stamps counts as matching.
@@ -240,7 +240,7 @@ def test_an_earlier_result_today_s_code_cannot_read_asks_to_be_recomputed(monkey
     assert status == "failed"
     c = api.states(p)[(2, "c")]
     assert c.state == "failed" and "which this version may no longer read" in c.reason
-    assert "the Denoise block" in c.reason and "1 -> 2" in c.reason and "“Recompute (current version)”" in c.reason
+    assert "the Denoise block" in c.reason and "1 -> 2" in c.reason and "“Recompute”" in c.reason
 
 
 def test_the_words_of_an_unreadable_result_name_its_block_and_the_command():
@@ -250,7 +250,7 @@ def test_the_words_of_an_unreadable_result_name_its_block_and_the_command():
     msg = unreadable_words(key_rules().chains, "star_removal", "3-9b974a78cb", "6-9b974a78cb", "Exception: boom")
     assert msg.startswith("the result of the Stars/background block was computed with an earlier version "
                           "(3-9b974a78cb -> 6-9b974a78cb)")
-    assert "“Recompute (current version)” on that block" in msg and msg.endswith("(Exception: boom)")
+    assert "“Recompute” on that block" in msg and msg.endswith("(Exception: boom)")
 
 
 # ---------------------------------------------------------------------------------------------- the golden tool
@@ -279,7 +279,7 @@ def test_the_golden_tool_reports_an_earlier_version_apart_from_outdated(monkeypa
 
 
 def test_recompute_of_a_calibration_makes_its_masters_again(tmp_path, monkeypatch):
-    """Recompute (current version) on Calibration: the masters are made again, not copied from the earlier result
+    """Recompute on Calibration: the masters are made again, not copied from the earlier result
     (a new hot-pixel map with the same settings came out 12.5 % where it should be 3.3 %). A frame cache merely lost
     is still rebuilt with the result's own masters."""
     from types import SimpleNamespace
@@ -307,4 +307,4 @@ def test_recompute_of_a_calibration_makes_its_masters_again(tmp_path, monkeypatc
         return (tmp / MASTERS).is_file()
 
     assert give(redo=False)              # a lost cache: the result's own masters, whatever version made them
-    assert not give(redo=True)           # Recompute (current version): a full calibration
+    assert not give(redo=True)           # Recompute: a full calibration

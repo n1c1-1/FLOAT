@@ -262,9 +262,9 @@ PATTERNS: list[tuple[re.Pattern, str, tuple]] = [
         # a block that failed while a result it reads is of an earlier version (core/runner2.UNREADABLE); the program's
         # own error, at its end, is for the Log only
         (r"^the result of the (.+) block was computed with an earlier version \((.+) -> (.+)\), which this version may "
-         r"no longer read: recompute it with “Recompute \(current version\)” on that block \(.*\)$",
+         r"no longer read: recompute it with “Recompute” on that block \(.*\)$",
          "the result of the {0} block was computed with an earlier version ({1} -> {2}), which this version may no "
-         "longer read: recompute it with “Recompute (current version)” on that block", (0,)),
+         "longer read: recompute it with “Recompute” on that block", (0,)),
         (r"^the graphics card stopped responding during (.+) and the run cannot go on: (.+)$",
          "the graphics card stopped responding during {0} and the run cannot go on: {1}", (0, 1)),
         (r"^the graphics card stopped responding again during (.+)$",
@@ -1376,24 +1376,33 @@ class RunController(QObject):
         return self._plan_and_open(planner, lambda: _('Run "{name}" to {block}').format(name=p.name, block=name))
 
     def recompute(self, paths, key: str):
-        """Recompute (current version) on a block of the views (its menu, its panel): the window of the plan, which
-        says what is computed again and how long before anything runs, as Run to here does. The block's results of an
-        earlier version of its method are computed again in their place, then what was made from them."""
+        """Recompute on a block of the views (its menu, its panel): the window of the plan, which says what is computed
+        again and how long before anything runs, as Run to here does. The block's results of an earlier version of its
+        method are computed again in their place, then what was made from them."""
+        return self.recompute_blocks([(paths, key)])
+
+    def recompute_blocks(self, blocks):
+        """Recompute for several blocks at once (Post, under a layer it cannot read): ``blocks`` is [(paths, key)]; one
+        window, one plan, each result made again once."""
         m = self.model
         if self.running:
             return self.show_dialog()
-        paths = list(paths or [])
-        if not paths or not key or not self.before_run():
+        blocks = [(list(paths or []), key) for paths, key in blocks if paths and key]
+        if not blocks or not self.before_run():
             return None
-        pids, name = [q.pid for q in paths], self.block_name(paths[0], key)
+        pids = [q.pid for paths, _k in blocks for q in paths]
+        names = ", ".join(dict.fromkeys(self.block_name(paths[0], key) for paths, key in blocks))
         self.scope = set(pids)
 
         def planner():
-            views = [q for q in (m.view(pid) for pid in pids) if q is not None]
-            if not views:
-                raise PlanRefused(_("{block} is no longer in the graph").format(block=name))
-            return m.plan_recompute(views, run_key(key)), None
-        return self._plan_and_open(planner, lambda: _("Recompute “{block}” (current version)").format(block=name))
+            plans = []
+            for paths, key in blocks:
+                views = [q for q in (m.view(q.pid) for q in paths) if q is not None]
+                if not views:
+                    raise PlanRefused(_("{block} is no longer in the graph").format(block=self.block_name(paths[0], key)))
+                plans.append(m.plan_recompute(views, run_key(key)))
+            return (plans[0] if len(plans) == 1 else m._one_plan(plans)), None
+        return self._plan_and_open(planner, lambda: _("Recompute “{block}” (current version)").format(block=names))
 
     def block_name(self, p, key: str) -> str:
         """A block as the graph and the run window name it ("Gradient 2", "Calibration · Session 2", 4.1 and 6.1)."""

@@ -419,6 +419,18 @@ def node_earlier(s, node, kind: str = "") -> list[tuple[str, str]]:
     return found
 
 
+def earlier_nodes_of(s, pids) -> list:
+    """The blocks of these workflows, in the graph's order, that are up to date with a result of an earlier version of
+    their method (``node_earlier``): what Post offers to recompute under a layer it cannot read."""
+    want = set(pids)
+    try:
+        bm = s.block_map
+        return [n for n in bm.nodes if bm.state(n) == "done" and want & {getattr(q, "pid", None) for q in n.paths}
+                and node_earlier(s, n)]
+    except (KeyError, ValueError, AttributeError, IndexError, TypeError):
+        return []
+
+
 def earlier_blocks(s) -> int:
     """How many blocks of the project are up to date with a result of an earlier version of their method."""
     try:
@@ -449,7 +461,7 @@ def earlier_words(earlier) -> str:
 
 
 #: the command of a block whose result is of an earlier version (its menu, its panel)
-RECOMPUTE = "Recompute (current version)"
+RECOMPUTE = "Recompute"
 RECOMPUTE_TIP = ("Computes this block again with the current version of its method, then the blocks after it. Its "
                  "result of the earlier version stays valid until then: nothing is recomputed unless you ask.")
 

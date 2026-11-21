@@ -82,6 +82,7 @@ from .icons import draw as draw_icon
 from .icons import icon_only, pixmap, set_icon
 from .imageview import ZOOM_PRESETS, ZOOM_STEP
 from .layout import STRIP_W, Dock, Sections
+from .graphnode import RECOMPUTE_TIP, earlier_nodes_of, node_title
 from .model import POST_PART_NAMES
 from .postengine import (
     visible_signature,
@@ -1192,6 +1193,7 @@ class PostView(QWidget):
     layerAsked = Signal(int)                              # Open in Post of a layer (the page lists it when not computed)
     openImages = Signal()                                 # images asked as layers
     runAsked = Signal()                                   # an image's kind changed: it is computed again
+    recomputeAsked = Signal(object)                       # Recompute of the blocks under an unreadable layer: [(paths, key)]
 
     def __init__(self, session, parent=None, *, worker: RenderWorker | None = None, persist: bool = True):
         super().__init__(parent)
@@ -1391,6 +1393,23 @@ class PostView(QWidget):
         sl.addWidget(self.stale_run)
         self.stale.hide()
         mv.addWidget(self.stale)
+        # a layer that cannot be read because its block's result is of an earlier version: said over the picture, with
+        # the command that computes those blocks again (not a pop-up; the Graph's own Recompute, one plan, one window)
+        self.earlier = QFrame()
+        self.earlier.setStyleSheet(f"QFrame {{ border-bottom: 2px solid {WARN}; }} QLabel {{ border: none; }}")
+        el = QHBoxLayout(self.earlier)
+        el.setContentsMargins(10, 4, 10, 4)
+        self.earlier_text = label("", "dim")
+        self.earlier_run = QPushButton(_("Recompute"))
+        self.earlier_run.setObjectName("recompute")
+        self.earlier_run.setToolTip(_(RECOMPUTE_TIP))
+        self.earlier_run.clicked.connect(self._recompute_earlier)
+        el.addWidget(self.earlier_text, 1)
+        el.addWidget(self.earlier_run)
+        self.earlier.hide()
+        self._earlier_key = None
+        self._earlier_blocks: list = []                  # the graph's blocks of the layers not shown, results of an earlier version
+        mv.addWidget(self.earlier)
         row = QHBoxLayout()                              # the picture, the tool column at its right edge
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
@@ -1773,6 +1792,7 @@ class PostView(QWidget):
         if self.worker.device:                           # the worker may have said it before we listened
             self._on_device(self.worker.device)
         self.s.pathsChanged.connect(self.sync_paths)
+        self.s.pathsChanged.connect(lambda: setattr(self, "_earlier_key", None))   # the states may have changed
         if hasattr(self.s, "postChanged"):
             self.s.postChanged.connect(self._post_changed)
             self.s.post_shown = lambda: save_layers(self.layers)
@@ -2474,22 +2494,25 @@ class PostView(QWidget):
         if res.kind in ("half", "refine") and set(res.missing) != self._missing_images:
             self._missing_images = set(res.missing)
             self._refresh_rows()
+        lost, pids = [], set()
+        for x in self.layers:
+            if is_pixel(x) and x.get("visible", True):
+                found = len(lost)
+                if f"layer:{x['id']}" in self._missing_images:
+                    lost.append(layer_name(x))
+                lost += [f"{layer_name(x)} ({_(SUB_NAMES[sub]).lower()})" for sub in SUBS
+                         if f"side:{x['id']}:{sub}" in self._missing_images]
+                if len(lost) > found:
+                    pids |= {x.get("pid"), x.get("stars_pid")}
+        self._show_earlier(lost, pids)
         if res.rgb is None or (self.layers and not any(is_pixel(x) and x.get("visible", True) for x in self.layers)):
-            self.viewer.banner = self._empty_banner()
+            self.viewer.banner = self._lost_banner(lost) or self._empty_banner()
             self.src.img1 = self.src.img2 = self.src.full = None       # nothing to show: the neutral canvas, not the old picture
             self.src.version += 1
             self.viewer.refresh()
             self.viewer.update()
             return
-        lost = []
-        for x in self.layers:
-            if is_pixel(x) and x.get("visible", True):
-                if f"layer:{x['id']}" in self._missing_images:
-                    lost.append(layer_name(x))
-                lost += [f"{layer_name(x)} ({_(SUB_NAMES[sub]).lower()})" for sub in SUBS
-                         if f"side:{x['id']}:{sub}" in self._missing_images]
-        self.viewer.banner = (_("Not shown, its result cannot be read: {names}")
-                              .format(names=", ".join(lost)))[:160] if lost else ""
+        self.viewer.banner = self._lost_banner(lost)
         self.first_image = True
         if res.hists:
             self._hists.update(res.hists)
@@ -4872,6 +4895,45 @@ class PostView(QWidget):
         self.stale.setVisible(bool(old))
         if old:
             self.stale_text.setText(_("Outdated: run to update") + "  ·  " + ", ".join(layer_name(x) for x in old[:3]))
+
+    def _lost_banner(self, lost: list) -> str:
+        """Over the picture, why layers are not shown: their block's result is of an earlier version (said with its
+        block, the strip above has Recompute), or cannot be read."""
+        if not lost:
+            return ""
+        words = (_("Not shown, computed by an earlier version of its block: {names}").format(names=self._earlier_names())
+                 if self._earlier_blocks else _("Not shown, its result cannot be read: {names}").format(names=", ".join(lost)))
+        return words[:160]
+
+    def _show_earlier(self, lost: list, pids: set):
+        """The strip over the picture for the layers that cannot be read: the blocks of their workflows whose result
+        was computed with an earlier version of their method (the Graph's amber blocks), and the command that computes
+        them again. Hidden when nothing is lost, or when no block of them is of an earlier version."""
+        pids.discard(None)
+        key = (tuple(lost), tuple(sorted(pids)))
+        if key == self._earlier_key:                     # asked once per change (a gesture's drafts come by dozens)
+            return
+        self._earlier_key = key
+        found = earlier_nodes_of(self.s, pids) if lost and pids else []
+        self._earlier_blocks = found
+        self.earlier.setVisible(bool(found))
+        if found:
+            self.earlier_run.setText(_("Recompute"))
+            self.earlier_run.setToolTip(_(RECOMPUTE_TIP))
+            self.earlier_text.setText(_("Earlier version") + "  ·  " + self._earlier_names())
+
+    def _earlier_names(self) -> str:
+        """The blocks to recompute as the graph names them, a workflow's name before its block's ("S-H-O · Combine layers")."""
+        out = []
+        for n in self._earlier_blocks:
+            q = n.paths[0]
+            out.append(f"{q.name} · {node_title(self.s, n)}")
+        out = list(dict.fromkeys(out))
+        return ", ".join(out[:3]) + (" …" if len(out) > 3 else "")
+
+    def _recompute_earlier(self):
+        """Recompute: the window of the plan opens (the Graph's, ``services/run.recompute_blocks``), nothing runs before."""
+        self.recomputeAsked.emit([(n.paths, n.ref) for n in self._earlier_blocks])
 
     def _refresh_rows(self):
         """The row texts (mode, opacity) without rebuilding the properties under the mouse."""

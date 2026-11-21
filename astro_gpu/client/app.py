@@ -1312,6 +1312,7 @@ class Main(QMainWindow):
         page.view.stale_run.clicked.connect(lambda _c=False: self.launch())
         page.view.runAsked.connect(self._post_to_compute)
         page.view.goResults.connect(self._go_results)
+        page.view.recomputeAsked.connect(lambda blocks: self.run.recompute_blocks(blocks) if self.run is not None else None)
         page.view.card_source = self.report              # the night card, for its Export
         page.view.undoChanged.connect(self._update_actions)   # Edit > Undo / Redo follow each step (a crop too)
         page.view.undoChanged.connect(self._post_seen)        # its steps stamped as they come (journal.py)
@@ -1431,7 +1432,7 @@ class Main(QMainWindow):
         self.set_mode(1)
 
     def _page_action(self, op: str, ident):
-        """What a block's menu or panel asks of the window: "recompute", Recompute (current version) of a block whose
+        """What a block's menu or panel asks of the window: "recompute", Recompute of a block whose
         result is of an earlier version of its method. The run's window opens on the plan: what is computed again and
         how long, before anything runs."""
         if op != "recompute" or self.s is None or self.run is None:
@@ -1619,6 +1620,11 @@ class Main(QMainWindow):
             from .runs import refusal_text
             return refusal_text(problems)
         if cost is not None and not cost.jobs:
+            from .graphnode import earlier_blocks
+            old = earlier_blocks(s)                       # never "up to date" over a result of an earlier version
+            if old and not self.waiting_text():
+                return plural(old, "{n} block in an earlier version: Recompute, on the block",
+                              "{n} blocks in an earlier version: Recompute, on a block")
             return self.waiting_text() or _("All up to date")
         return ""
 

@@ -573,7 +573,7 @@ class Panel(QWidget):
     variantMade = Signal(int, int)      # new workflow, the one it is a variant of
     toast = Signal(str)                 # a word to say (what came with a change, why it was refused)
     cutToggled = Signal()               # the block's switch: cut it, or restore it (issue #43)
-    recompute = Signal()                # Recompute (current version): the block shown, its result of an earlier version
+    recompute = Signal()                # Recompute: the block shown, its result of an earlier version
     selectBlock = Signal(str)           # a greyed block's reason: select the block that was cut
     restoreBlock = Signal(str)          # a greyed block's panel: restore the block that was cut
     sectionsChanged = Signal()          # its sections were built (issue #44: the strip of icons follows)
