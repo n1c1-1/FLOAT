@@ -403,8 +403,38 @@ def order_jobs(jobs: Any, order: list[str], targets: set[int] | None = None) -> 
     return out
 
 
+def earlier_redo(project: Project2, workflows: list[int | Workflow], kw: dict[str, Any],
+                 stages: dict[Any, list[str]] | None = None) -> None:
+    """A run recomputes, in their place, the done results computed with an earlier version of their stage's method
+    (what "Recompute" does for one block), and what was made from them: their keys go to ``kw["redo"]``, which the
+    planner reads as it does for "Recompute". ``stages``: {workflow: the stages a plan reaches} (all when None)."""
+    keys = kw.get("keys") or Keys(project)
+    kw["keys"] = keys
+    store = kw.get("store")
+    if store is None:
+        store = kw["store"] = Store(project.root) if project.root is not None else None
+    if store is None:
+        return
+    redo = set(kw.get("redo") or ())
+    for wf in workflows:
+        w = project.workflow(wf)
+        try:
+            chain = keys.chain(w)
+        except ValueError:
+            continue
+        for s in (chain if stages is None else stages.get(wf, chain)):
+            k = keys.key(w, s)
+            m = store.manifest(s, k)
+            if store.is_done(s, k, m) and earlier_version(keys, w, s, m) is not None:
+                redo.add(k)
+    kw["redo"] = redo
+
+
 def plan_workflows(project: Project2, workflows: list[int | Workflow], **kw: Any) -> Plan:
-    """The plan computing every stage of the given workflows (ids, or Workflow objects for a what-if)."""
+    """The plan computing every stage of the given workflows (ids, or Workflow objects for a what-if). The results
+    of an earlier version of their method are in it: they are computed again in their place (``earlier_redo``)."""
+    kw = dict(kw)
+    earlier_redo(project, workflows, kw)
     p = Planner(project, **kw)
     return p.plan([(w, s) for w in workflows for s in p.keys.chain(w)])
 
@@ -416,6 +446,10 @@ def plan_all(project: Project2, **kw: Any) -> Plan:
 
 def plan_to_block(project: Project2, wf: int | Workflow, block: str, **kw: Any) -> Plan:
     """Run to here: the stages of a block in the workflow's chain (Selection: register), and what they need."""
+    kw = dict(kw)
+    keys = kw.get("keys") or Keys(project)
+    kw["keys"] = keys
+    earlier_redo(project, [wf], kw, {wf: keys.rules.chains.run_to(block, keys.chain(wf))})
     p = Planner(project, **kw)
     return p.plan([(wf, s) for s in p.chains.run_to(block, p.keys.chain(wf))])
 

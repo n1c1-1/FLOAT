@@ -647,7 +647,5 @@
  "The header lists the stretch exactly: it was undone from these lines:": "L'en-tête liste l'étirement exactement : il a été défait d'après ces lignes :",
  "The image as the blocks after it read it: linear when its stretch was undone, in the display's automatic stretch.": "L'image telle que les blocs suivants la lisent : linéaire quand son étirement a été défait, avec l'étirement automatique de l'affichage.",
   "{n} block in an earlier version": "{n} bloc en version antérieure",
-  "{n} blocks in an earlier version": "{n} blocs en version antérieure",
-  "{n} block in an earlier version: Recompute, on the block": "{n} bloc en version antérieure : « Recalculer » sur le bloc",
-  "{n} blocks in an earlier version: Recompute, on a block": "{n} blocs en version antérieure : « Recalculer » sur un bloc"
+  "{n} blocks in an earlier version": "{n} blocs en version antérieure"
 }

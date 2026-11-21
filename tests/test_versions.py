@@ -130,7 +130,11 @@ def test_a_new_version_leaves_every_block_done_and_says_which_one_is_earlier(mon
     assert {x.state for x in st.values()} == {"done"}                       # nothing Outdated, nothing to recompute
     assert st[(2, "b")].earlier == ("1", "2") and st[(2, "b")].key == before[(2, "b")].key
     assert [k for k, x in st.items() if x.earlier] == [(2, "b")]           # the blocks after it are plain results
-    assert not api.plan_all(p) and api.cost(p).jobs == 0                    # a Run recomputes nothing
+    # a Run recomputes it, in its place, and what was made from it (the same plan as Recompute on that block)
+    run = api.plan_all(p)
+    assert [(j.stage, j.redo) for j in run.jobs] == [("b", True), ("c", True), ("e", True)]
+    assert [j.key for j in run.jobs] == [j.key for j in api.plan_recompute(p, 2, "denoise").jobs]
+    assert api.cost(p).jobs == 3
     # the blocks after it, and Post, read it as any result
     assert api.stage_outputs(p, 2, "b") is not None and api.stage_outputs(p, 2, "e") is not None
     assert api._dir(p, 2, "e") == Store(p.root).dir("e", st[(2, "e")].key)
@@ -144,7 +148,7 @@ def test_a_result_recorded_before_the_stamps_is_valid_and_says_its_earlier_versi
     assert set(_states(p).values()) == {"done"} and not api.plan_all(p)
     _bump(monkeypatch, p, "stack", "7")                    # its version is read from the key parts it kept
     st = api.states(p)
-    assert {x.state for x in st.values()} == {"done"} and not api.plan_all(p)
+    assert {x.state for x in st.values()} == {"done"} and api.plan_all(p)      # a Run recomputes them
     assert st[(1, "stack")].earlier == ("1", "7") and st[(2, "stack")].earlier == ("1", "7")
     assert st[(2, "c")].earlier is None
 
@@ -236,7 +240,9 @@ def test_an_earlier_result_today_s_code_cannot_read_asks_to_be_recomputed(monkey
     f = Store(p.root).dir("b", st[(2, "b")].key) / "b.json"
     f.write_text(json.dumps({"count": 10}), encoding="utf-8")              # what version 1 wrote: today's c cannot read it
     api.set_param(p, 2, "c", "k", 2.0)
-    status, _ = run_inproc(p, api.plan_all(p))
+    plan = api.plan_all(p)                                  # a Run recomputes b first; this one is the plan without it
+    plan.jobs = [j for j in plan.jobs if j.stage != "b"]
+    status, _ = run_inproc(p, plan)
     assert status == "failed"
     c = api.states(p)[(2, "c")]
     assert c.state == "failed" and "which this version may no longer read" in c.reason

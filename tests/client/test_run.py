@@ -18,6 +18,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -844,6 +845,30 @@ def test_reviewed_is_tied_to_the_results_of_the_block(toy, monkeypatch):
     ctl.pause.pids = [1]
     m.mark_reviewed(ctl.pause)                                  # the block is not computed now: nothing is marked
     assert not m.is_reviewed(plain, "calibration") and m.pause_point().block == "calibration"
+
+
+def test_run_has_the_blocks_of_an_earlier_version_in_its_plan_and_an_up_to_date_project_stays_greyed(
+        toy, monkeypatch):
+    """Run is not greyed over a block of an earlier version: its plan (and its cost) has that block and what is made
+    from it, in their place, the same jobs as Recompute on the block; not the blocks before it. A project up to date:
+    no job, Run greyed, "All up to date"."""
+    from astro_gpu.client import app as appmod
+    in_process(monkeypatch)
+    m = toy.model
+    toy.run_all()
+    fake = SimpleNamespace(s=m, waiting_text=lambda: "")
+    assert m.cost().jobs == 0 and len(m.plan_run()[0]) == 0
+    assert appmod.Main.run_refusal(fake, m.cost()) == "All up to date"
+    for rules in (api._ctx(m.p).rules(), toy_rules()):
+        monkeypatch.setattr(type(rules.chains.stages["denoise"]), "version", "2")
+    api.refresh(m.p)
+    m._cache.clear()
+    cost, plan = m.cost(), m.plan_run()[0]
+    assert cost.jobs == len(plan) > 0 and plan.jobs[0].stage == "denoise" and all(j.redo for j in plan.jobs)
+    assert not {"inventory", "stack"} & {j.stage for j in plan.jobs}
+    view = m.view(2)
+    assert [j.key for j in plan.jobs] == [j.key for j in m.plan_recompute([view], "denoise").jobs]
+    assert appmod.Main.run_refusal(fake, cost) == ""
 
 
 def test_a_block_done_and_not_reviewed_opens_the_dialog_on_the_pause(toy, monkeypatch):

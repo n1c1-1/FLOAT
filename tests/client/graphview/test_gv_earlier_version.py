@@ -222,9 +222,9 @@ def test_a_block_of_an_earlier_version_is_counted_by_one_rule_for_the_graph_the_
     assert earlier_blocks(m) == 0
 
 
-def test_run_is_never_up_to_date_over_a_block_of_an_earlier_version_and_says_where_the_command_is():
-    """The Run button greyed with "All up to date" while a block's result is of an earlier version said the opposite
-    of the graph's amber block: it says how many, and where Recompute is."""
+def test_a_greyed_run_over_blocks_of_an_earlier_version_says_the_plain_reason_and_a_run_has_them_in_its_plan():
+    """Run is no longer greyed for blocks of an earlier version (their jobs are in its plan): when it is greyed there
+    is nothing to run, and it says so, whatever the versions."""
     from astro_gpu.client import app as appmod
     info = {"gradient": api.StageState("done", "", "k1", earlier=("5", "6"))}
     p = SimpleNamespace(pid=1, params={}, opts={})
@@ -234,10 +234,8 @@ def test_run_is_never_up_to_date_over_a_block_of_an_earlier_version_and_says_whe
                         state_info=lambda q, st: info.get(st), state=lambda q, st: "done", block_map=bm,
                         all_stages=lambda q: list(info))
     fake = SimpleNamespace(s=m, waiting_text=lambda: "")
-    none = SimpleNamespace(jobs=0)
-    assert appmod.Main.run_refusal(fake, none) == "1 block in an earlier version: Recompute, on the block"
-    info.clear()
-    assert appmod.Main.run_refusal(fake, none) == "All up to date"
+    assert appmod.Main.run_refusal(fake, SimpleNamespace(jobs=0)) == "All up to date"
+    assert appmod.Main.run_refusal(fake, SimpleNamespace(jobs=2)) == ""
 
 
 def test_the_blocks_of_an_earlier_version_of_some_workflows_are_found_in_the_graph_s_order():
@@ -283,3 +281,4 @@ def test_recompute_of_several_blocks_is_one_plan_in_one_window(qapp):
     RunController.recompute_blocks(fake, [([p1], "fond"), ([p2], "etoiles")])
     assert len(seen["plans"]) == 2 and fake.scope == {1, 2}
     assert opened["title"] == "Recompute “fond, etoiles” (current version)"
+
