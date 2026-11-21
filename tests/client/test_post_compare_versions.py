@@ -349,3 +349,43 @@ def test_the_compared_version_is_picked_from_its_caption(post):
     menu.actions()[1].trigger()
     assert v.cb_cmp.currentData() == SUGGESTED and v.viewer.compare_names[0] == "Suggested"
     assert not v.cb_cmp.isVisible()
+
+
+def _answer_nothing_once(v):
+    """The worker answers the compared side's first request with no picture, as a render does when the results it reads
+    cannot be read at that moment; returns the list of the requests it saw."""
+    from astro_gpu.client.services.render import Result
+    renderer = v.worker.renderer
+    real, seen = renderer.run, []
+
+    def run(req, stop=None, emit=None):
+        if req.kind == "before":
+            seen.append(req)
+            if len(seen) == 1:
+                return Result(req.seq, req.kind, req.level, req.box, None, None, device=renderer.device, tag=req.tag)
+        return real(req, stop, emit)
+    renderer.run = run
+    return seen
+
+
+def test_the_compared_side_without_a_picture_says_so_and_is_asked_again_without_choosing_it_again(post):
+    """The report: Compare's left side stayed black until another item was chosen several times. The compared side's answer
+    with no picture went through the shown side's handling ("nothing to show": its picture dropped and its banner set),
+    which returned before the compared side took it, and nothing asked again. Now the answer is the compared side's own,
+    it says it waits, and the shown side's next render asks for it again."""
+    v = post.view
+    _two_versions(post)
+    assert post.settle()
+    seen = _answer_nothing_once(v)
+    _key(v, Qt.Key_C)
+    assert post.settle()
+    assert len(seen) == 1 and v.before.img1 is None and v._before_empty       # the answer had no picture
+    assert v.src.img1 is not None and not v.viewer.banner                       # ... and it is no word on the shown side
+    img = QImage(v.viewer.size(), QImage.Format_ARGB32)
+    v.viewer.render(img)
+    assert v._compared_tag.__self__ is v                                        # (the tag is a viewer overlay)
+    assert v._compared_tag in v.viewer.overlays
+    v.refresh()                                                                 # the shown side renders again
+    assert post.settle()
+    assert len(seen) == 2 and v.before.img1 is not None and v.before.img1.max() > 0
+    assert v.cb_cmp.currentData() == 2                                          # (without choosing anything again)

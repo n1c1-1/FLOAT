@@ -1382,6 +1382,7 @@ class PostView(QWidget):
         self._prev_version = None                         # the version left last (the default of Compare)
         self._before_sig = None                           # what the compared side was rendered from
         self._before_gen = 0                              # its requests' number: an answer of an older one is dropped
+        self._before_empty = False                        # its last answer had no picture (nothing readable then): asked again
         self._version_click = QTimer(self, singleShot=True)
         self._version_click.timeout.connect(self.cb_version.showPopup)
         self.cb_version.lineEdit().installEventFilter(self)
@@ -1419,6 +1420,7 @@ class PostView(QWidget):
         self.viewer.overlays.append(self._ann_overlay)
         self.viewer.overlays.append(self._heal_overlay)
         self.viewer.overlays.append(self._behind_tag)
+        self.viewer.overlays.append(self._compared_tag)
         self.viewer.banner = _("Rendering…")
         self.viewer.crop_box = tuple(self.crop) if self.crop else None
         # a picture from outdated results: said over it, with the Run that brings it up to date (not a pop-up)
@@ -2410,13 +2412,16 @@ class PostView(QWidget):
         return (self.cb_cmp.currentData(), what, self.src.canvas, self.screen_level())
 
     def _refresh_before(self):
-        """The compared side again when what it is rendered from changed (a slider of the shown version is not one)."""
-        if self.b_cmp.isChecked() and self._before_signature() != self._before_sig:
+        """The compared side again when what it is rendered from changed (a slider of the shown version is not one), or
+        when its last answer had no picture: the shown side rendering again (its results are read again) asks for it
+        once more, as choosing the item again would."""
+        if self.b_cmp.isChecked() and (self._before_signature() != self._before_sig or self._before_empty):
             self._send_before()
 
     def _send_before(self):
         self._before_sig = self._before_signature()
         self._before_gen += 1
+        self._before_empty = False
         self.before.full = None
         layers, plain = self._before_layers_of()
         self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=plain,
@@ -2496,6 +2501,22 @@ class PostView(QWidget):
             return _("Waiting for the layers' results")        # visible layers whose image does not exist yet
         return _("Every image layer is hidden")
 
+    def _on_before(self, res):
+        """The compared side's answer (a picture of the other version's layers, or of the suggested settings, and its
+        visible region at full resolution). Only the shown side's results speak for the shown picture: an answer of the
+        compared side with no picture leaves it alone and is asked again with the shown side's next render."""
+        if res.tag is not None and res.tag != self._before_gen:  # (not an older choice's picture)
+            return
+        if res.kind == "before":
+            self._before_empty = res.rgb is None
+            self.before.img1, self.before.level1 = res.rgb, res.level
+        elif res.rgb is not None:
+            self.before.full = (res.box, res.rgb)
+        self.before.version += 1
+        self.viewer.update()
+        self._hint()
+        self.rendered.emit(res)
+
     def _on_result(self, res):
         if res.kind == "inspect":
             return                                              # Inspect's final image, rendered on the same worker
@@ -2514,6 +2535,9 @@ class PostView(QWidget):
                 self.src.version += 1
                 self.viewer.refresh()
                 self.rendered.emit(res)
+            return
+        if res.kind in ("before", "before_region"):             # the compared side: never the shown picture's state (an
+            self._on_before(res)                                # answer with no picture is its own, not "nothing to show")
             return
         if res.seq < self._last_seq.get(res.kind, 0):
             return                                              # an answer older than one already shown
@@ -2607,16 +2631,6 @@ class PostView(QWidget):
             self.src.version += 1
             self.viewer.refresh()
             self._tell_refining()
-        elif res.kind == "before":
-            if res.tag is None or res.tag == self._before_gen:       # (not an older choice's picture)
-                self.before.img1, self.before.level1 = res.rgb, res.level
-                self.before.version += 1
-                self.viewer.update()
-        elif res.kind == "before_region":
-            if res.tag is None or res.tag == self._before_gen:
-                self.before.full = (res.box, res.rgb)
-                self.before.version += 1
-                self.viewer.update()
         if res.kind in ("draft", "half", "refine", "exact"):    # the search of stars: said while the picture says it;
             from .postengine import STARS_FAILED, STARS_SEARCHING       # the engine's notes said until they change
             searching = {STARS_SEARCHING, STARS_FAILED}
@@ -2660,6 +2674,9 @@ class PostView(QWidget):
             self._exact_wait = None
             self.viewer.update()
             self._tell_refining()
+        if kind == "before":
+            self._before_empty = True                      # (asked again with the shown side's next render)
+            self.viewer.update()
         if kind in ("draft", "half", "region", "before", "start"):
             first = _("Image not computed: {why}").format(why=plain_error(text))
             if first != self.viewer.banner:                  # said once; the program's error in the Log only
@@ -2858,6 +2875,17 @@ class PostView(QWidget):
                            min(max(corner.y(), 0.0), max(v.height() - 40.0, 0.0)) + 10), text)
         else:
             self._working = None
+
+    def _compared_tag(self, p: QPainter, v: Viewer):
+        """Compare: while the compared side has no picture it says why (it was a plain black): "Updating…" while it is
+        asked for, the layers' results awaited when its answer had none."""
+        if not self.b_cmp.isChecked() or self.before.img1 is not None or v.compare is None or self.src.canvas is None:
+            return
+        from .imageview import tag
+        corner = v.img_to_w(0, 0)
+        text = _("Waiting for the layers' results") if self._before_empty else _("Updating…")
+        tag(p, QPointF(min(max(corner.x(), 0.0), max(v.width() * v.curtain - 200.0, 0.0)) + 10,
+                       min(max(corner.y(), 0.0), max(v.height() - 40.0, 0.0)) + 40), text)
 
     def _on_working(self, seq, info):
         """The worker makes a filter for the screen's picture or the release's full resolution: the banner names it
