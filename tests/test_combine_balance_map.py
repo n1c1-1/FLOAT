@@ -20,6 +20,9 @@ class _Quiet:
     def metric(self, *_a, **_k):
         pass
 
+    def progress(self, *_a, **_k):
+        pass
+
 
 def _apply(maps, raw):
     return {r: sum(np.float64(c) * raw[k].astype(np.float64) for k, c in coef.items()) + off
@@ -73,3 +76,20 @@ def test_the_output_matrix_is_the_one_the_run_mixes_with():
     assert mat == C.hue_palette((10.0, 40.0, 200.0))
     roles, mat = C.output_matrix(None, C.CombineRGB().spec(None))
     assert roles == ("R", "G", "B") and np.allclose(mat, np.eye(3))
+
+
+def test_post_measures_an_hargb_balance_as_its_run_does(tmp_path):
+    """Post measures a combination's balance itself when no run read these inputs (postfusion.balance_maps): an HaRGB,
+    whose continuum step tells its progress (#185), measures there too."""
+    from astro_gpu.client import postfusion
+    spec = recipes.load(Path(C.__file__).parents[1] / "resources" / "combinations" / "hargb.toml")
+    ports = recipes.roles(spec)
+    raw, _neb = _sky_field({r: 100.0 + i for i, r in enumerate(ports)}, {r: 1.5 for r in ports})
+    yy, xx = np.mgrid[0:raw["Ha"].shape[0], 0:raw["Ha"].shape[1]]
+    for y, x in [(20, 30), (40, 150), (120, 40), (130, 160), (80, 20), (25, 100), (140, 100)]:
+        star = 4000.0 * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.6 ** 2))
+        for r in ports:
+            raw[r] = (raw[r] + star * (0.6 if r == "Ha" else 1.0)).astype(np.float32)
+    inputs = [{"role": r, "full_scale": 65535.0, "dir": str(tmp_path / r)} for r in ports]   # read already: raw
+    hit = postfusion.balance_maps("combine_recipe", spec, inputs, "sky", raw=(raw, np.ones(raw["Ha"].shape, bool)))
+    assert hit["from"] == "measured" and set(hit["maps"]) == set(ports)
