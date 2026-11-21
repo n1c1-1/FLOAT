@@ -414,11 +414,11 @@ def star_sizes(y: torch.Tensor, fwhm: float, check=None):
     ys, xs = torch.nonzero(pk, as_tuple=True)
     n = max(2, int(math.ceil(2.0 * fwhm)))
     if ys.numel() == 0:
-        return ys, xs, torch.zeros(0)
+        return ys, xs, torch.zeros(0, device=L.device)
     peak = L[ys, xs]
-    size = torch.full((ys.numel(),), float(n + 1))
+    size = torch.full((ys.numel(),), float(n + 1), device=L.device)
     prev = torch.ones_like(peak)                       # the survival at radius 0
-    done = torch.zeros(ys.numel(), dtype=torch.bool)
+    done = torch.zeros(ys.numel(), dtype=torch.bool, device=L.device)
     eroded = L[None]
     for rho in range(1, n + 1):
         eroded = _step(eroded, False, cross=((rho - 1) % 2 == 0))
@@ -443,8 +443,8 @@ def star_reach(L: torch.Tensor, ys: torch.Tensor, xs: torch.Tensor, cap: int) ->
     level reach e - 1 and a disc of radius e does not fit in them; ``cap`` (a dense field's stars never come down) for
     those that do not."""
     h, w = L.shape
-    out = torch.full((ys.numel(),), float(cap))
-    done = torch.zeros(ys.numel(), dtype=torch.bool)
+    out = torch.full((ys.numel(),), float(cap), device=L.device)
+    done = torch.zeros(ys.numel(), dtype=torch.bool, device=L.device)
 
     def at(py, px):                                   # the light at a fractional place (bilinear)
         y0, x0 = torch.floor(py), torch.floor(px)
@@ -506,7 +506,7 @@ def fade_small_stars(y: torch.Tensor, f: float, fwhm: float, check=None) -> torc
     big = max(2 * rho, int(math.ceil(float(reach.mean()))))
     base = torch.minimum(_morph(_morph(y, big, False), big, True), first)
     _go_on(check)
-    mark = torch.zeros(1, *y.shape[-2:])
+    mark = torch.zeros(1, *y.shape[-2:], device=y.device)
     mark[0, ys[gone], xs[gone]] = 1.0
     spread = _morph(mark, big, True)
     w = ops.gaussian_blur(spread, rho / SIZE_PER_SIGMA)[0].clamp(0, 1)
