@@ -86,7 +86,7 @@ def test_contrast_rebuilds_neither_the_starless_image_nor_the_stretched_filters(
     screen's level and at full resolution, when no mask of a filter reads the picture; Sky moves the stretch: both are
     made again."""
     calls = {"side": 0, "factor": 0}
-    side, factor = Composer._fusion_side_blend, SimpleRenderEngine.colour_factor
+    side, factor = Composer._mix_blend, SimpleRenderEngine.colour_factor
 
     def counted_side(self, *a, **k):
         calls["side"] += 1
@@ -95,7 +95,7 @@ def test_contrast_rebuilds_neither_the_starless_image_nor_the_stretched_filters(
     def counted_factor(*a, **k):
         calls["factor"] += 1
         return factor(*a, **k)
-    monkeypatch.setattr(Composer, "_fusion_side_blend", counted_side)
+    monkeypatch.setattr(Composer, "_mix_blend", counted_side)
     monkeypatch.setattr(SimpleRenderEngine, "colour_factor", staticmethod(counted_factor))
     layers = scene(picture=False)
     eds = _edits(layers)

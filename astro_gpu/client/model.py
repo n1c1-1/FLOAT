@@ -3998,8 +3998,7 @@ class _ProjectBase(QObject):
             return None
         spec = combine_spec(v)
         inputs = list(((getattr(v, "source", None) or {}).get("fusion") or {}).get("inputs") or [])
-        why = postfusion.plain_reason(stage, spec, inputs, self._chains.get(pid) or [])
-        return stage, spec, dict(w.params.get(stage) or {}), inputs, why
+        return stage, spec, dict(w.params.get(stage) or {}), inputs, postfusion.plain_reason(spec)
 
     def layers_title(self, node) -> str:
         """A Combine layers block's one shown name, everywhere (the graph, its panel, Inspect's band and editor, the
@@ -4046,7 +4045,8 @@ class _ProjectBase(QObject):
 
     def graph_tunable(self, pid: int) -> bool:
         """Whether a combination's hues and intensities are graph settings (client/postfusion.py): Post mixes its
-        filters itself (no lightness of its own, not the stars alone, no block after it), so they need no run."""
+        filters itself (the layer tree has it as a mix), so they need no run. A model without a graph: any combination
+        with no lightness of its own."""
         c = self._combination(pid)
         return c is not None and not c[4]
 
@@ -4075,6 +4075,23 @@ class _ProjectBase(QObject):
         settings command): {"blend", "stretch", "sliders"} of its block, and "tune" (None: none, the block's stored
         values) when it shows a combination by its filters; None when the graph gives it nothing."""
         return None
+
+    def post_tree(self, lay: dict, live: dict | None = None) -> dict | None:
+        """The layer tree of a layer of Post (graphcore post.mix_tree, with the descriptions Post's mixers need); None
+        for a layer the graph gives none, and for a model without a graph. ``live``: {path: the settings being moved in
+        Post, not yet kept} of the mixes."""
+        return None
+
+    def node_copies(self, lay: dict, tree: dict | None = None) -> dict | None:
+        """The graph's settings the nested mixes of a layer have not copied yet ({"tunes": {path: settings | None}},
+        ``postfusion.put_copy``'s shape); None when there is nothing to copy."""
+        return None
+
+    def with_node_copies(self, lay: dict) -> bool:
+        """The nested mixes of a layer that have no copy of their graph settings yet take it (once: the entry of
+        ``tunes`` says it was made); whether the layer changed."""
+        from . import postfusion
+        return postfusion.put_copy(lay, self.node_copies(lay))
 
     def with_graph_copy(self, lay: dict) -> dict:
         """A layer just made, with the copy of the graph's settings it takes (``graph_copy``); returned for chaining."""

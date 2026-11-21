@@ -54,27 +54,27 @@ def qapp():
 
 
 # ---------------------------------------------------------------------------------------------- the rule
-def test_a_lightness_recipe_the_stars_and_a_block_after_the_combination_stay_plain():
-    sho, lrgb = recipes.legacy_spec("sho"), recipes.legacy_spec("lrgb")
-    ins = [{"role": r, "image": "starless"} for r in ("SII", "Ha", "OIII")]
-    assert postfusion.plain_reason("combine_sho", sho, ins, ["combine_sho", "render_simple"]) == ""
-    assert postfusion.plain_reason("combine_lrgb", lrgb, [], ["combine_lrgb", "render_simple"]) == "lightness"
-    assert postfusion.plain_reason("combine_sho", sho, [dict(i, image="stars") for i in ins], []) == "stars"
-    assert postfusion.plain_reason("combine_sho", sho, ins, ["combine_sho", "color", "render_simple"]) == "after"
-    assert postfusion.plain_reason("combine_rgb", recipes.legacy_spec("rgb"), [], ["combine_rgb", "render_simple"]) == ""
+def test_a_lightness_recipe_stays_plain_by_its_recipe_and_the_graph_says_the_rest():
+    """The recipe's own reason is postfusion's; what the graph puts around a combination (a block after it, its depth) is
+    the layer tree's (tests/graphcore/test_mix_tree.py), said on the node's row as a note (below)."""
+    assert postfusion.plain_reason(recipes.legacy_spec("sho")) == ""
+    assert postfusion.plain_reason(recipes.legacy_spec("lrgb")) == "lightness"
+    assert postfusion.plain_reason(recipes.legacy_spec("rgb")) == ""
 
 
-def test_every_reason_a_layer_stays_plain_has_its_tooltip_in_both_languages():
+def test_every_reason_a_mix_is_fixed_has_its_note_and_its_tooltip_in_both_languages():
     import inspect
     import re
 
     from astro_gpu.client import i18n
-    from astro_gpu.client.post3 import PLAIN_TIPS
-    said = set(re.findall(r'return "(\w+)"', inspect.getsource(postfusion.plain_reason)))
-    assert said == {"stars", "lightness", "after"} and said <= set(PLAIN_TIPS)
+    from astro_gpu.client.post3 import FIXED_NOTE, FIXED_TIPS
+    from astro_gpu.graphcore import post as gp
+    said = set(re.findall(r'return "(\w+)"', inspect.getsource(postfusion.plain_reason))) |         set(re.findall(r'"why": "(\w+)"', inspect.getsource(gp.mix_tree)))
+    assert said == {"lightness", "after", "depth"} and said <= set(FIXED_TIPS)
     try:
         i18n.set_language("fr")
-        assert all(i18n._(t) != t for t in PLAIN_TIPS.values())
+        assert all(i18n._(t) != t for t in (*FIXED_TIPS.values(), FIXED_NOTE))
+        assert i18n._(FIXED_NOTE) == "Mélange figé"
     finally:
         i18n.set_language("en")
 
@@ -157,7 +157,7 @@ def m27(qapp, tmp_path_factory):
 
 
 def _master(pv):
-    pv._attach_fusion()
+    pv._attach_tree()
     return next(x for x in pv.layers if pe.is_group(x) and x.get("starless") == "output")
 
 
@@ -168,7 +168,7 @@ def _settle(w):
 
 def _render(pv, level=2):
     from astro_gpu.client.services.render import Request
-    pv._attach_fusion()
+    pv._attach_tree()
     if getattr(pv.worker, "renderer", None) is None:
         pv.worker._make()
     return pv.worker.renderer.run(Request(kind="half", layers=pe.snapshot(pv.layers), level=level))
@@ -204,7 +204,10 @@ def test_m27_opens_with_its_combination_as_the_master_layer_and_its_definition_u
     assert w.s.p.post == before                                 # converted in memory only
     stored = next(x for x in before["versions"][0]["layers"] if x.get("part") == "combined")
     stored = {k: v for k, v in stored.items() if k != "sky_scale"}    # (a key of before, withdrawn: read past)
-    assert next(x for x in pe.save_layers(pv.layers) if x["id"] == lay["id"]) == stored
+    got = next(x for x in pe.save_layers(pv.layers) if x["id"] == lay["id"])
+    if all(t is None for t in (got.get("tunes") or {}).values()):         # (a nested mix's copy of the graph's
+        got.pop("tunes", None)                                              # settings, none of its own: said at the next save)
+    assert got == stored
     st = lay["fusion"]["stage"]                                 # its first hues and intensities: the block's
     blk = _block(w, lay["pid"], st)
     assert lay["fusion"]["hues"]["OIII"] == float(blk.get("hue_oiii", 202.2)) and "tune" not in lay
@@ -426,30 +429,37 @@ def test_the_master_panel_shows_the_combination_s_settings_and_colours_greyed(m2
     assert "S II intensity" in names and "Colours" not in names
 
 
-def test_a_combination_post_cannot_make_stays_a_plain_layer_said_in_its_tooltip(m27, monkeypatch):
-    from astro_gpu.client.post3 import PLAIN_TIPS
+def test_a_combination_post_cannot_make_again_is_said_on_its_row_naming_the_block_that_fixes_it(m27, monkeypatch):
+    from astro_gpu.client import i18n
+    from astro_gpu.client.post3 import FIXED_NOTE
     w, pv, _before = m27
-    real = w.s.fusion_of
-    for why in ("after", "lightness", "stars"):                   # each reason of postfusion.plain_reason
-        monkeypatch.setattr(w.s, "fusion_of", lambda pid, over=None, tune=False, y=why: (None, y) if pid == 5 else
-                            real(pid, over, tune))
+    real = w.s.post_tree
+    for why, by in (("after", "Stars/background"), ("lightness", None), ("depth", "H-O")):
+        def fixed(lay, live=None, why=why, by=by):
+            tree = real(lay, live) if live else real(lay)
+            if tree is not None and tree["kind"] == "layers":
+                tree["sides"]["starless"] = {"kind": "fixed", "block": 1, "combination": "S-H-O", "by": by, "why": why}
+            return tree
+        monkeypatch.setattr(w.s, "post_tree", fixed)
         pv.sel = None
         pv.rebuild()
         lay = next(x for x in pv.layers if pe.is_group(x) and x.get("starless") == "output")
         assert not pe.is_fusion(lay)
-        row = next(r for r in pv.rows if r.lay["id"] == lay["id"] and r.lay["kind"] == "workflow")
-        assert row.toolTip() == PLAIN_TIPS[why], why
-    assert PLAIN_TIPS["after"] == "Blocks follow the combination in its workflow: Post shows its Output as it is"
+        row = next(r for r in pv.rows if r.lay["id"] == lay["id"] and r.lay.get("sub") == "starless")
+        assert row.note is not None and row.note.text() == FIXED_NOTE, why
+        tip = row.note.toolTip()
+        assert ("S-H-O" in tip and by in tip) if by else tip.startswith("A combination composed as lightness"), why
+        try:
+            i18n.set_language("fr")
+            pv.rebuild()
+            row = next(r for r in pv.rows if r.lay["id"] == lay["id"] and r.lay.get("sub") == "starless")
+            assert row.note.text() == "Mélange figé" and (by is None or by in row.note.toolTip()), why
+        finally:
+            i18n.set_language("en")
     monkeypatch.undo()
     pv.rebuild()
-    # a combination's Output shown as a plain layer (another S-H-O of the filters, as it comes): why, on its row
-    out = pe.new_workflow_layer(6, "S-H-O coeur", True)
-    pv.layers.insert(0, out)
-    pv.rebuild()
-    row = next(r for r in pv.rows if r.lay["id"] == out["id"])
-    assert row.toolTip().startswith("The combination's Output as its run mixed it")
-    pv.layers.remove(out)
-    pv.rebuild()
+    lay = next(x for x in pv.layers if pe.is_group(x) and x.get("starless") == "output")
+    assert pe.is_fusion(lay) and all(r.note is None for r in pv.rows if r.lay["id"] == lay["id"])
 
 
 def test_a_hue_drag_in_post_follows_the_slider_and_is_one_step(m27):

@@ -319,3 +319,87 @@ def post_actions(before, after, c=None) -> list[tuple]:
     a, b = wired_images(before), wired_images(after)
     return [("remove_post_part", wid, part) for wid, part in sorted(a - b, key=str)] + \
         [("add_post_layer", wid, part) for wid, part in sorted(b - a, key=str)]
+
+
+# ---------------------------------------------------------------------------------------------------- the layer tree
+def _inputs(g, b):
+    """{input port: [the block, its out port]} of the active wires into a block."""
+    out = {}
+    for w in g.wires:
+        if w.dst[0] == b and w.active and w.src[0] in g.blocks:
+            out.setdefault(w.dst[1], list(w.src))
+    return out
+
+
+def _after(g, ix, b):
+    """(the combination heading the row of block ``b``, the first block after it on the way to Post, up to ``b``): when
+    ``b`` is after a combination in its row; that block is None when all of them are switched off (they pass the image
+    as it is). (None, None) when ``b`` follows no combination."""
+    from .rules import nestable
+    rid = ix.row_of.get(b)
+    if rid is None:
+        return None, None
+    chain = ix.effective(rid)
+    if not chain or chain[0] == b or not nestable(g.blocks[chain[0]].kind):
+        return None, None
+    between = [x for x in chain[1:chain.index(b) + 1] if not g.blocks[x].off]
+    return chain[0], (between[0] if between else None)
+
+
+def layers_tree(g, background, stars, level=1, block=None, ix=None):
+    """The tree of a Combine layers layer from the images its two sides read (each a [block, out port] or None: a side
+    not wired is not there): the layer's own, drawn or not (a layer of a version Post does not show has no block;
+    ``block``: the Combine layers block when there is one)."""
+    ix = ix or Index(g)
+    sides = {}
+    for side, src in (("starless", background), ("stars", stars)):
+        if src is not None:
+            sides[side] = mix_tree(g, src[0], src[1], level + 1, block, ix)
+    return {"kind": "layers", "block": block, "sides": sides}
+
+
+def mix_tree(g, block, port="image", level=1, reader=None, ix=None):
+    """The layer tree of what Post shows for the image at the out port ``port`` of ``block`` (pure, on block ids, derived
+    and never saved; #181). Nodes:
+
+    * {"kind": "layers", "block", "sides": {"starless": node, "stars": node}}: a Combine layers (its Background and
+      Stars inputs; the side not wired is not there);
+    * {"kind": "mix", "block", "roles": {role: node}}: a combination Post mixes from its filters, one node per input
+      wired, in the recipe's order;
+    * {"kind": "image", "block", "port"}: an image Post shows as it is (a filter's Output, a Starless or Stars only image);
+    * {"kind": "fixed", "block": the combination, "by": the block that made its image what it is (None for "lightness"),
+      "why": "after" | "depth" | "lightness"}: a combination whose mix Post cannot remake, said, never silent. "after":
+      another block of its row follows it (Stars/background, Color...: the first of them is ``by``); "depth": the nesting
+      is deeper than rules.MAX_NEST (``by`` is the block that reads it); "lightness": its recipe is composed as lightness
+      and colour (LRGB).
+
+    A block of the combination family (rules.nestable) wired from another one's image, nothing between, is a nested
+    node: the layer reads it as a mix; any other block makes the combination before it a fixed image. ``level``: the
+    level of this node (1 for the layer Post shows); ``reader``: the block that reads it."""
+    from . import combos
+    from .rules import MAX_NEST, nestable
+    ix = ix or Index(g)
+    blk = g.blocks[block]
+    if not nestable(blk.kind) or port != "image":
+        head, by = _after(g, ix, block)
+        if head is not None and by is None:             # what follows it is switched off: its image as it is
+            return mix_tree(g, head, "image", level, reader, ix)
+        if head is not None:
+            return {"kind": "fixed", "block": head, "by": by, "why": "after"}
+        return {"kind": "image", "block": block, "port": port}
+    if blk.kind == "combine_layers":
+        ins = _inputs(g, block)
+        return layers_tree(g, ins.get("Background"), ins.get("Stars"), level, block, ix)
+    spec = combos.spec(blk)
+    if ((spec or {}).get("output") or {}).get("lightness") is not None:
+        return {"kind": "fixed", "block": block, "by": None, "why": "lightness"}
+    if level > MAX_NEST:
+        return {"kind": "fixed", "block": block, "by": reader, "why": "depth"}
+    ins = _inputs(g, block)
+    roles = {}
+    for i in combos.inputs(blk):
+        if i["label"] in ins:
+            src = ins[i["label"]]
+            roles[i["role"]] = mix_tree(g, src[0], src[1], level + 1, block, ix)
+    return {"kind": "mix", "block": block, "roles": roles}
+

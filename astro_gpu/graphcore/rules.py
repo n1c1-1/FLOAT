@@ -131,6 +131,19 @@ def setting_spec(kind, key):
 #: layer of Post takes a copy of them when it is made, and again by its Graph settings command (client/postfusion.py)
 GRAPH_SETTINGS = "graph"
 GRAPH_SETTING_KINDS = ("combine", "combine_layers")
+#: the most special levels Post nests (#181): Combine layers over a combination over a combination over its filters, or
+#: three combinations when no Combine layers is there. Combine layers is always last (AFTER_LAYERS), so the graph itself
+#: bounds the chain; the rest is a combination of combinations of combinations, which no recipe means. A combination
+#: beyond it is a fixed image (graphcore/post.mix_tree), never silent.
+MAX_NEST = 3
+
+
+def nestable(kind: str) -> bool:
+    """Whether Post can show the image of a block of ``kind`` as the mix of what it reads, nested in the layer above
+    it. A property of the kind: those of the combination family, the blocks whose settings Post copies
+    (GRAPH_SETTING_KINDS), each of which has its mixer in Post (client/postfusion.MIXERS; a test ties the two), so a
+    new kind of the family nests by itself and a new recipe needs nothing at all."""
+    return kind in GRAPH_SETTING_KINDS
 
 
 def inherited(p, kind):

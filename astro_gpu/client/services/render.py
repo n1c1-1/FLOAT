@@ -161,6 +161,10 @@ def choose_device(pref: str = "auto", busy: str | None = None, need_gb: float = 
 
 
 # ---------------------------------------------------------------------------------------------- the engine's layers
+#: the combinations' balanced planes kept at full resolution (a layer's tree has one per combination)
+FUSIONS_KEPT = 4
+
+
 @dataclass
 class Folder:
     path: Path
@@ -332,6 +336,8 @@ class LayerSource(Provider):
         self._img: dict[str, Any] = {}                       # key -> (SimpleRenderEngine, Grid), or None: not there
         self._img_epoch: dict[str, int] = {}
         self._fus: dict = {}                                  # a combination's balanced filters (``fusion_planes``)
+        self._forms: dict = {}                                # how a combination reads its inputs (``fusion_form``)
+        self._reads: dict = {}                                # what a combination reads of its inputs (``fusion_reads``)
 
     # ------------------------------------------------------------ the results on disk
     def folder(self, sid) -> Folder | None:
@@ -655,7 +661,9 @@ class LayerSource(Provider):
             except (KeyError, OSError, ValueError) as e:
                 self.mark_gone(sid)
                 raise Unreadable(sid) from e
-            self._fus = {key: {"planes": planes, "valid": valid, "gains": gains, "reduced": {}}}
+            while len(self._fus) >= FUSIONS_KEPT:             # (a layer's tree has several: the oldest goes)
+                self._fus.pop(next(iter(self._fus)))
+            self._fus[key] = {"planes": planes, "valid": valid, "gains": gains, "reduced": {}}
         return self._fus[key]
 
     def fusion_gains(self, lay: dict) -> dict:
@@ -684,6 +692,58 @@ class LayerSource(Provider):
                                          down(full["valid"].astype(np.float32)))
         out = {r: self._cut(a, fi, region, size, True) for r, a in red[0].items()}
         return out, self._cut(red[1], fi, region, size, True) > 0.99
+
+    def fusion_form(self, lay: dict) -> dict:
+        """How the roles of a combination read its inputs (postfusion.node_form), kept for the last result and balance."""
+        from ..postfusion import node_form
+        sid = (FUSION, lay["pid"])
+        f = self.folder(sid)
+        if f is None:
+            raise Unreadable(sid)
+        bal = (lay.get("fusion") or {}).get("balance", "sky")
+        key = (str(f.path), f.mtime, bal)
+        hit = self._forms.get(key)
+        if hit is None:
+            try:
+                hit = self._forms[key] = node_form(f.path, bal)
+            except (KeyError, OSError, ValueError) as e:
+                self.mark_gone(sid)
+                raise Unreadable(sid) from e
+        return hit
+
+    def fusion_reads(self, lay: dict, level: int, box):
+        """{role: (h, w)}: the channels a combination reads of its inputs (postfusion.read_planes), windowed as
+        ``fusion_planes`` is."""
+        from ..postfusion import read_planes
+        sid = (FUSION, lay["pid"])
+        f = self.folder(sid)
+        if f is None:
+            raise Unreadable(sid)
+        key = (str(f.path), f.mtime)
+        if key not in self._reads:
+            try:
+                raw, _valid = read_planes(f.path)
+            except (KeyError, OSError, ValueError) as e:
+                self.mark_gone(sid)
+                raise Unreadable(sid) from e
+            while len(self._reads) >= FUSIONS_KEPT:
+                self._reads.pop(next(iter(self._reads)))
+            self._reads[key] = {"planes": raw, "reduced": {}}
+        full = self._reads[key]
+        fi, region, size = self._window(sid, level, box)
+        whole = self._cv.size(level)
+        if level == 0 and tuple(box) != (0, 0, *whole):
+            x0, x1, y0, y1 = (int(round(v)) for v in region)
+            return {r: self._cut(a[y0:y1, x0:x1], 1, region, size, False) for r, a in full["planes"].items()}
+        red = full["reduced"].get(fi)
+        if red is None:
+            def down(a):
+                if fi == 1:
+                    return np.asarray(a, np.float32)
+                h, w = a.shape[0] // fi, a.shape[1] // fi
+                return a[:h * fi, :w * fi].reshape(h, fi, w, fi).mean(axis=(1, 3), dtype=np.float32)
+            red = full["reduced"][fi] = {r: down(a) for r, a in full["planes"].items()}
+        return {r: self._cut(a, fi, region, size, True) for r, a in red.items()}
 
     def fusion_settings(self, lay: dict):
         f = self.folder(lay["pid"])

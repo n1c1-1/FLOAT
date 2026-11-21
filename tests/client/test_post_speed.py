@@ -304,3 +304,160 @@ def test_the_times_of_a_layer_setting_under_the_stack_at_the_window_s_size(big, 
     # 2 s, not 1: a setting of the layer itself makes all twelve filters again, heavy ones among them, at the
     # screen's size (the owner: 1.6 s is acceptable behind twelve filters); its drafts keep the light gesture's 0.15 s
     timed(slow_factor, 2.0, best_release, "the screen's picture of a layer setting under the stack")
+
+
+# ---------------------------------------------------------------------------------------------- the deepest tree
+class _Deep(pe.Provider):
+    """A layer tree at its maximum depth (#181): Combine layers whose starless side is an S-H-O (B) with an H-O (A) as its Hα,
+    its stars the stars' combination C. 6 Mpx planes; every plane asked for is counted (``asked``); the levels are block means,
+    kept (a file is read once: what a gesture must not do again)."""
+
+    def __init__(self, hh, ww):
+        rng = np.random.default_rng(2)
+
+        def blob(s):
+            return (cv2.GaussianBlur(rng.random((hh, ww)).astype(np.float32), (0, 0), s) * 0.3 +
+                    rng.normal(0, .004, (hh, ww)).astype(np.float32))
+        self.hh, self.ww = hh, ww
+        self.planes = {6: {"Ha": blob(30), "OIII": blob(40)},                              # the H-O (A)
+                       5: {"SII": blob(35), "Ha": blob(30), "OIII": blob(25)},             # the S-H-O (B)
+                       7: {"R": blob(20), "G": blob(25), "B": blob(30)}}                   # the stars' combination
+        self.reads = {r: blob(15) for r in ("SII", "OIII")}
+        self.asked = 0
+        self._lv: dict = {}
+
+    def version(self, pid):
+        return 0
+
+    def available(self, sid):
+        return isinstance(sid, tuple) and sid[0] == pe.FUSION or sid in (("stars", 7), 7)
+
+    def canvas(self, pids):
+        return pe.Canvas(self.ww, self.hh)
+
+    def _at(self, key, a, level):
+        k = (key, level)
+        if k not in self._lv:
+            f = 2 ** level
+            h, w = self.hh // f * f, self.ww // f * f
+            self._lv[k] = a[:h, :w].reshape(h // f, f, w // f, f).mean(axis=(1, 3)).astype(np.float32) if f > 1 else a
+        return self._lv[k]
+
+    def fusion_planes(self, lay, level, box):
+        self.asked += 1
+        x0, y0, x1, y1 = box
+        out = {r: self._at((lay["pid"], r), a, level)[y0:y1, x0:x1] for r, a in self.planes[lay["pid"]].items()}
+        return out, np.ones(next(iter(out.values())).shape, bool)
+
+    def fusion_form(self, lay):
+        return {"maps": {"SII": ({"SII": 1.1}, 0.0), "Ha": ({"Ha": 1.2, "OIII": 0.05}, 0.01), "OIII": ({"OIII": 0.9}, 0.0)},
+                "channels": {"SII": "L", "Ha": "L", "OIII": "L"}}
+
+    def fusion_reads(self, lay, level, box):
+        self.asked += 1
+        x0, y0, x1, y1 = box
+        return {r: self._at(("read", r), a, level)[y0:y1, x0:x1] for r, a in self.reads.items()}
+
+    def layer(self, lay, level, box, draft=False, stop=None):
+        assert lay.get("stars_over") is not None, lay
+        x0, y0, x1, y1 = box
+        x = sum(self._at((7, r), a, level) for r, a in self.planes[7].items()) / 3
+        e = np.repeat((1.0 - np.exp(-5.0 * np.clip(x, 0, None)))[..., None], 3, -1)
+        return e[y0:y1, x0:x1].astype(np.float32)
+
+
+def _deep_layers(prov):
+    """The layers of the deepest tree: the Combine layers, its S-H-O whose Hα is an H-O, the stars' combination; the
+    deepest leaves' masks read the picture; a stack of twelve filters on top, and one on a deepest leaf."""
+    from test_post_fusion import _lum_part
+    from test_post_nest import fusion_c, group, tree
+    stars = {"kind": "mix", "block": 4, "pid": 7, "title": "S-H-O · Stars", "fusion": dict(
+        fusion_c(), roles=["R", "G", "B"], names={"R": "R", "G": "G", "B": "B"}, matrix=[[1 / 3] * 3] * 3,
+        weights={"R": 1.0, "G": 1.0, "B": 1.0}, stars=True, neutral=True),
+        "roles": {r: {"kind": "image"} for r in "RGB"}}
+    t = tree(None, None, stars)
+    sho = t["sides"]["starless"]
+    ho = sho["roles"]["Ha"]
+    sho["pid"], ho["pid"] = 5, 6
+    sho["fusion"] = dict(sho["fusion"], roles=["SII", "Ha", "OIII"], names={"SII": "S II", "Ha": "Hα", "OIII": "O III"},
+                         matrix=[[1.0, 0.0, 0.2], [0.0, 1.0, 0.3], [0.0, 0.0, 0.9]],
+                         weights={"SII": 1.0, "Ha": 1.0, "OIII": 1.0})
+    ho["fusion"] = dict(ho["fusion"], roles=["Ha", "OIII"], matrix=[[1.0, 0.0], [0.0, 0.5], [0.0, 0.5]],
+                        weights={"Ha": 1.0, "OIII": 1.0})
+    sho["roles"] = {"SII": {"kind": "image"}, "Ha": ho, "OIII": {"kind": "image"}}
+    ho["roles"] = {"Ha": {"kind": "image"}, "OIII": {"kind": "image"}}
+    g = group(t, stars_pid=7, stars_image="output",
+              side_masks={"f:Ha/f:Ha": _lum_part(**{"from": "picture"}), "f:Ha/f:OIII": _lum_part(**{"from": "picture"})})
+    deep = pe.new_filter_layer("levels", g["id"], "f:Ha/f:Ha")
+    deep["params"].update(gamma=0.9)
+    tops = []
+    for key, params in STACK:
+        f = pe.new_filter_layer(key, g["id"])
+        f["params"].update(params)
+        tops.append(f)
+    return pe.normalize(list(reversed(tops)) + [deep, g]), g, deep, tops
+
+
+def test_the_deepest_tree_s_gestures_make_what_they_change_only_and_in_time(monkeypatch, slow_factor):
+    """Combine layers over an S-H-O whose Hα is an H-O (three levels), the stars' combination as its stars, the deepest
+    leaves' masks reading the picture, twelve filters on top: a light drag on the top filter and on a deepest leaf's filter
+    make that filter only, at the drag's size, and no plane is read again; the times of a deepest leaf's light gesture, an
+    inner hue drag's draft and the screen's picture of a release."""
+    prov = _Deep(2000, 3000)
+    layers, g, deep, tops = _deep_layers(prov)
+    cp = Composer(prov)
+    cp.compose(copy.deepcopy(layers), 3, draft=True, track=True)
+    cp.compose(copy.deepcopy(layers), 1, track=True)               # (the screen's picture, kept)
+    cp.compose(copy.deepcopy(layers), 3, draft=True, track=True)
+    work = Work(monkeypatch)
+    read = prov.asked
+
+    def edited(change):
+        out = copy.deepcopy(layers)
+        change(out)
+        return out
+
+    def set_top(strength):
+        return lambda ls: next(x for x in ls if x.get("filter") == "saturation")["params"].__setitem__("strength", strength)
+    best_top = best_deep = best_hue = best_release = 1e9
+    for k in range(5):
+        changed = edited(set_top(31.0 + k))
+        t0 = time.perf_counter()
+        cp.compose(changed, 3, draft=True, track=True)
+        best_top = min(best_top, time.perf_counter() - t0)
+    assert {w[0] for w in work.log} == {tops[-1]["id"]}, "a light drag on the top filter made other filters"
+    biggest = max(w[1] for w in work.log)
+    assert biggest <= (3000 >> 3) * (2000 >> 3) * 1.05
+    work.log.clear()
+    for k in range(5):
+        def gamma(ls, k=k):
+            next(x for x in ls if x["id"] == deep["id"])["params"]["gamma"] = 0.8 + 0.01 * k
+        changed = edited(gamma)
+        t0 = time.perf_counter()
+        cp.compose(changed, 3, draft=True, track=True)
+        best_deep = min(best_deep, time.perf_counter() - t0)
+    assert deep["id"] in {w[0] for w in work.log}
+    assert prov.asked == read, "a drag of a deepest leaf's filter read a plane again"
+    for k in range(5):                                             # an inner hue: the H-O's colours
+        def hue(ls, k=k):
+            n = next(x for x in ls if pe.is_group(x))
+            n["nest"] = copy.deepcopy(n["nest"])
+            n["nest"]["sides"]["starless"]["roles"]["Ha"]["fusion"]["matrix"] = [
+                [1.0, 0.0], [0.0, 0.3 + 0.02 * k], [0.0, 0.7 - 0.02 * k]]
+        changed = edited(hue)
+        t0 = time.perf_counter()
+        cp.compose(changed, 3, draft=True, track=True)
+        best_hue = min(best_hue, time.perf_counter() - t0)
+    assert prov.asked == read, "a hue drag of the inner combination read a plane again"
+    for k in range(5):                                             # the screen's picture after a release of the top filter
+        changed = edited(set_top(40.0 + k))
+        t0 = time.perf_counter()
+        cp.compose(changed, 1, track=True)
+        best_release = min(best_release, time.perf_counter() - t0)
+    print()
+    print(f"gate, deepest tree: top filter {best_top:.3f} s, deepest leaf's filter {best_deep:.3f} s, inner hue "
+          f"{best_hue:.3f} s, release {best_release:.3f} s, machine x{slow_factor:.2f}")
+    timed(slow_factor, 0.15, best_top, "the light gesture's picture at the deepest tree")
+    timed(slow_factor, 0.15, best_deep, "a deepest leaf's light gesture")
+    timed(slow_factor, 0.15, best_hue, "an inner hue drag's draft")
+    timed(slow_factor, 1.0, best_release, "the screen's picture after a release, at the deepest tree")

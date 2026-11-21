@@ -1376,6 +1376,7 @@ class GraphEditing:
         if not getattr(self, "_provisional", False) and getattr(self, "_g", None) is not None and \
                 not getattr(self, "_absorbing", False):
             self._follow_post()
+            self._drop_gone_levels()
         if json.dumps(getattr(self.p, "post", None) or {}, sort_keys=True, default=str) != was:
             self.postChanged.emit(None)
 
@@ -1940,7 +1941,7 @@ class GraphEditing:
         stage = combos.stage(blk)
         out = []
         c = self._combination(pid) if pid is not None else None
-        if c is not None and not c[4]:
+        if c is not None and self.graph_tunable(pid):
             from . import postfusion
             part, values = postfusion.split_change(c[1], values)
             if part:
@@ -2118,19 +2119,185 @@ class GraphEditing:
         return bm.block_of(n) if n is not None else None
 
     def graph_copy(self, lay: dict) -> dict | None:
-        """What a Combine layers layer takes from the graph (model.ProjectModel.graph_copy): its block's blend, stretch
-        and sliders, and the combination's hues and intensities when it shows one by its filters."""
+        """What a Combine layers layer takes from the graph (model.ProjectModel.graph_copy), node by node: its block's
+        blend, stretch and sliders, the hues and intensities of the combination it shows by its filters (``tune``) and
+        of each combination nested in it (``tunes``, by the node's path: client/postfusion.py)."""
         from . import postfusion
-        if not lay or lay.get("kind") != "workflow" or lay.get("part") != "combined":
+        if not lay or lay.get("kind") != "workflow" or lay.get("part") not in (None, "combined"):
             return None
         out: dict = {}
-        bid = self._layers_block_of(lay)
+        bid = self._layers_block_of(lay) if lay.get("part") == "combined" else None
         if bid is not None:
             out.update(self.layers_graph(bid))
-        pid = lay.get("pid")
-        if lay.get("starless") == "output" and pid is not None and self.graph_tunable(pid):
-            out[postfusion.TUNE] = self.fusion_graph(pid)
+        tree = self.post_graph_tree(lay)
+        tunes: dict = {}
+        for path, node in postfusion.node_paths(tree).items() if tree else ():
+            if node["kind"] != "mix":
+                continue
+            if path in ("", "starless"):
+                if lay.get("starless") == "output" or lay.get("part") is None:
+                    out[postfusion.TUNE] = self.block_graph(node["block"])
+            else:
+                tunes[path] = self.block_graph(node["block"])
+        if tunes:
+            out[postfusion.TUNES] = tunes
         return out or None
+
+    # ------------------------------------------------------------------ the layer tree (#181)
+    def block_graph(self, bid) -> dict | None:
+        """The graph settings kept on a block of the combination family ({"hues", "weights"} of a combination), a copy;
+        None when it has none of its own."""
+        from ..graphcore.rules import GRAPH_SETTINGS
+        blk = self._g.blocks.get(bid) if bid is not None else None
+        got = (blk.settings or {}).get(GRAPH_SETTINGS) if blk is not None else None
+        return copy.deepcopy(got) if got else None
+
+    def post_graph_tree(self, lay: dict) -> dict | None:
+        """The layer tree of a layer of Post as the graph gives it (graphcore post.mix_tree, on block ids; derived, never
+        saved): a Combine layers layer from the images its two sides read (its Background, its Stars side), a workflow's
+        Output layer from the block that sends it to Post. None for another layer or a workflow the graph does not draw.
+        Read from the layer, not from a block drawn for it: any version of Post has one."""
+        from ..graphcore import post as gp
+        g = self._g
+        if lay.get("kind") != "workflow" or lay.get("pid") is None:
+            return None
+        pid = int(lay["pid"])
+        flows = gp._flows(g)
+        if lay.get("part") is None:
+            at = gp.place_of(g, pid, None, flows)
+            return gp.mix_tree(g, at[0], at[1]) if at else None
+        if lay.get("part") != "combined":
+            return None
+        at = gp.place_of(g, pid, None if lay.get("starless") == "output" else "starless", flows)
+        sp = lay.get("stars_pid", pid)
+        st = gp.place_of(g, int(sp), None if lay.get("stars_image") == "output" else "stars", flows) \
+            if sp is not None else None
+        return gp.layers_tree(g, list(at) if at else None, list(st) if st else None)
+
+    def node_fusion(self, pid: int, tune=None, over: dict | None = None) -> dict | None:
+        """The description of a combination as a node of the layer tree (postfusion.describe, with its title): from
+        ``tune`` (the node's own settings; None: the block's stored values). Whatever the node is: the layer tree says
+        whether Post mixes it."""
+        from ..stages import recipes
+        from . import postfusion
+        from .graphnode import port_name
+        c = self._combination(pid) if pid is not None else None
+        if c is None:
+            return None
+        stage, spec, stored, inputs, _why = c
+        names = {r: port_name(r) for r in recipes.roles(spec)}
+        f = postfusion.describe(stage, spec, postfusion.tuned_stored(stage, spec, stored, tune), names, over,
+                                inputs=inputs)
+        f["title"] = self.shown_title(pid)
+        return f
+
+    def post_tree(self, lay: dict, live: dict | None = None) -> dict | None:
+        """The layer tree of a layer of Post as Post's mixers read it (``post_graph_tree``, each node described):
+        {"kind": "layers", "block", "sides": {"starless": node, "stars": node}}; {"kind": "mix", "block", "pid",
+        "title", "fusion": postfusion.describe, "roles": {role: node}}; {"kind": "image", "block", "port"}; {"kind":
+        "fixed", "block", "combination": the combination's title, "by": the title of the block that fixes it (None
+        for a recipe composed as lightness and colour), "why": "after" | "depth" | "lightness"}. A node's path names
+        it in every saved key (postfusion.child)."""
+        from ..graphcore import rules
+        from . import postfusion
+        tree = self.post_graph_tree(lay)
+        if tree is None:
+            return None
+        g = self._g
+        ix = gm.Index(g)
+
+        def title(b):
+            return rules.title(g, b, ix, _) if b is not None else None
+
+        def conv(n, path):
+            k = n["kind"]
+            if k == "layers":
+                return {"kind": "layers", "block": n["block"], "sides": {s: conv(c, s) for s, c in n["sides"].items()}}
+            if k == "mix":
+                r = ix.row.get(ix.row_of.get(n["block"]))
+                pid = r.wid if r is not None else None
+                return {"kind": "mix", "block": n["block"], "pid": pid, "title": title(n["block"]),
+                        "fusion": self.node_fusion(pid, postfusion.tune_at(lay, path), (live or {}).get(path)),
+                        "roles": {role: conv(c, postfusion.child(path, role)) for role, c in n["roles"].items()}}
+            if k == "fixed":
+                return {"kind": "fixed", "block": n["block"], "combination": title(n["block"]), "by": title(n["by"]),
+                        "why": n["why"]}
+            return dict(n)
+        return conv(tree, "")
+
+    def node_copies(self, lay: dict, tree: dict | None = None) -> dict | None:
+        """The nested mixes of a layer that have no entry in its ``tunes`` yet, each with its block's graph settings
+        (None: none of its own): what ``with_node_copies`` puts. The layer's own mix (``tune``) is copied when the layer
+        is made."""
+        from . import postfusion
+        tree = tree if tree is not None else self.post_graph_tree(lay)
+        if tree is None:
+            return None
+        have = lay.get(postfusion.TUNES) or {}
+        out = {path: self.block_graph(n["block"]) for path, n in postfusion.node_paths(tree).items()
+               if n["kind"] == "mix" and path not in ("", "starless") and path not in have}
+        return {postfusion.TUNES: out} if out else None
+
+    def _drop_gone_levels(self) -> bool:
+        """The own settings of a level the graph no longer has (a combination no longer mixed at that node) are dropped from the layers of every version, when the
+        graph change that took the level away is committed (never before: a graph Undo gives the layers back as the step
+        found them, the settings with them). Nothing is moved to another level: the level, when it comes back, starts
+        again from the graph's settings."""
+        from . import postfusion
+        changed = False
+        for v in (getattr(self.p, "post", None) or {}).get("versions") or []:
+            for lay in v.get("layers") or []:
+                if lay.get("kind") != "workflow" or lay.get("part") not in (None, "combined"):
+                    continue
+                tree = self.post_graph_tree(lay)
+                if tree is not None:
+                    nodes = postfusion.node_paths(tree)
+                    changed |= postfusion.drop_tunes(lay, [p for p, n in nodes.items() if n["kind"] == "mix"])
+                    changed |= postfusion.prune(v.get("layers") or [], lay, nodes)
+                    if lay.get("part") is None:                  # (its side is the layer itself: a filter goes to the layer)
+                        for f in v.get("layers") or []:
+                            if f.get("kind") == "filter" and f.get("target") == lay.get("id") and f.get("sub") in postfusion.SIDES:
+                                f["sub"] = None
+                                changed = True
+        return changed
+
+    def _mixed_blocks(self) -> set:
+        """The combinations of the graph Post mixes: the nodes of kind mix in the tree of each layer of Post."""
+        from . import postfusion
+        out: set = set()
+        for lay in self.post_layers():
+            tree = self.post_graph_tree(lay) if lay.get("part") in (None, "combined") else None
+            out |= {n["block"] for n in postfusion.node_paths(tree).values() if n["kind"] == "mix"} if tree else set()
+        return out
+
+    def graph_tunable(self, pid: int) -> bool:
+        """Whether a combination's hues and intensities are graph settings (client/postfusion.py): its recipe is not
+        composed as lightness and colour and it is not the stars alone (the model's rule, wherever the combination is
+        used: Inspect, the recipe panel, drafts), and the layer trees of Post do not have it as a fixed image (a block
+        after it, too deep). Post's nodes take their own copy of the settings either way (``graph_copy``)."""
+        q = self.view(pid)
+        c = self._combination(pid) if q is not None else None
+        if c is None or not super().graph_tunable(pid):
+            return False
+        if c[3] and all(i.get("image") == "stars" for i in c[3]):
+            return False
+        try:
+            return self._combine_block(q) not in self._fixed_blocks()
+        except (ValueError, KeyError):                   # (a workflow the graph does not draw yet)
+            return True
+
+    def master_layer(self, pid: int) -> dict | None:
+        """The combination's master layer (model.master_layer), only when its hues and intensities are graph settings."""
+        return super().master_layer(pid) if self.graph_tunable(pid) else None
+
+    def _fixed_blocks(self) -> set:
+        """The combinations the layer trees of Post show as a fixed image (a block follows them, or they are too deep)."""
+        from . import postfusion
+        out: set = set()
+        for lay in self.post_layers():
+            tree = self.post_graph_tree(lay) if lay.get("part") in (None, "combined") else None
+            out |= {n["block"] for n in postfusion.node_paths(tree).values() if n["kind"] == "fixed"} if tree else set()
+        return out
 
     def keep_variant(self, q):
         self._do([("keep_variant", {"row": self._row(q).id})])
