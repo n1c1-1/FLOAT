@@ -1059,7 +1059,7 @@ def earlier_version(keys: Keys, wf: int | Workflow, stage: str, manifest: Mappin
 class Upstream:
     """Whether the done results of a project still stand on the upstream results they were made from.
 
-    A result recomputed in its place ("Recompute (current version)") keeps its key, so the results made from the
+    A result recomputed in its place ("Recompute") keeps its key, so the results made from the
     earlier one would still look valid. Each manifest has a ``stamp`` (made once, when the result is computed) and
     ``upstream``: {name: {"key", "stamp"}} of the done results it read. ``redone(wf, stage)`` is true when one of them
     has another stamp now, when one is itself in that case, or when one is among ``redo`` (the keys a plan recomputes

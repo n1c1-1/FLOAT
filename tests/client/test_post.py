@@ -3853,6 +3853,76 @@ def test_one_side_of_a_combined_layer_that_cannot_be_read_leaves_the_other_shown
     assert rows and "not computed" in rows[0].sub.full_text() and not rows[0].sub.isHidden()
 
 
+def _earlier_block(monkeypatch):
+    """One block of workflow 1 whose result is of an earlier version (the Graph's amber block), for a toy model that
+    has no graph."""
+    from types import SimpleNamespace
+
+    from astro_gpu.client import post3
+    node = SimpleNamespace(paths=[SimpleNamespace(pid=1, name="Full")], ref="etoiles")
+    monkeypatch.setattr(post3, "earlier_nodes_of", lambda s, pids: [node] if 1 in pids else [])
+    monkeypatch.setattr(post3, "node_title", lambda s, n: "Combine layers")
+    return node
+
+
+def test_a_layer_not_shown_for_an_earlier_version_says_so_with_its_block_and_offers_recompute(exporting_stars,
+                                                                                              monkeypatch):
+    s = exporting_stars
+    v = s.view
+    g = _group_of(s)
+    g["starless"] = "output"
+    node = _earlier_block(monkeypatch)
+    _lose_stars(s)
+    v._missing_images = set()
+    v._earlier_key = None
+    v.request()
+    assert s.settle()
+    assert "computed by an earlier version of its block" in v.viewer.banner and "Full · Combine layers" in v.viewer.banner
+    assert "cannot be read" not in v.viewer.banner
+    assert v.earlier.isVisibleTo(v) and v.earlier_run.text() == "Recompute" and v.earlier_run.isEnabled()
+    assert "Combine layers" in v.earlier_text.text() and v.earlier_run.toolTip()
+    asked = []
+    v.recomputeAsked.connect(asked.append)
+    v.earlier_run.click()
+    assert asked == [[(node.paths, "etoiles")]]                       # the Graph's own command, for those blocks
+
+
+def test_a_layer_not_shown_with_no_block_of_an_earlier_version_keeps_its_plain_words_and_no_command(exporting_stars,
+                                                                                                    monkeypatch):
+    from astro_gpu.client import post3
+    s = exporting_stars
+    v = s.view
+    g = _group_of(s)
+    g["starless"] = "output"
+    monkeypatch.setattr(post3, "earlier_nodes_of", lambda s, pids: [])
+    _lose_stars(s)
+    v._missing_images = set()
+    v._earlier_key = None
+    v.request()
+    assert s.settle()
+    assert "its result cannot be read" in v.viewer.banner and not v.earlier.isVisibleTo(v)
+
+
+def test_the_earlier_version_words_of_post_are_french(exporting_stars, monkeypatch):
+    from astro_gpu.client import app as appmod
+    s = exporting_stars
+    v = s.view
+    g = _group_of(s)
+    g["starless"] = "output"
+    _earlier_block(monkeypatch)
+    _lose_stars(s)
+    appmod.apply_language("fr")
+    try:
+        v._missing_images = set()
+        v._earlier_key = None
+        v.request()
+        assert s.settle()
+        assert "calculé par une ancienne version de son bloc" in v.viewer.banner
+        assert v.earlier_run.text() == "Recalculer" and v.earlier_text.text().startswith("Version antérieure")
+    finally:
+        appmod.apply_language("en")
+
+
 def test_the_row_of_a_layer_that_cannot_be_read_shows_not_computed_and_loses_it_when_it_can(exporting):
     s = exporting
     v = s.view

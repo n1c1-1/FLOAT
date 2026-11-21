@@ -99,7 +99,7 @@ class GraphCanvas(QGraphicsView):
     inspect = Signal(object)             # Enter / double-click / menu "Inspect" on this id
     open_post = Signal(object)           # menu "Open Post" of a Combine layers block: Post on its layer
     view_action = Signal(str, object)    # a menu action only the window can do: ("mark_reviewed", block),
-    #                                      ("recompute", block): Recompute (current version)
+    #                                      ("recompute", block): Recompute
     templates_asked = Signal()           # the blank page's link « From template »
     wire_chosen = Signal(object)         # a wire that can be removed was chosen: its id (the panel shows it)
 

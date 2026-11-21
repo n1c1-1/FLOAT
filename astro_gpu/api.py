@@ -2075,7 +2075,7 @@ def plan_to_block(p: Project2, wf: int | Workflow, block: str, device: str | Non
 
 def plan_recompute(p: Project2, wf: int | Workflow, block: str, device: str | None = None,
                    history: dict | None = None) -> Plan:
-    """Recompute (current version): the results of a block of the workflow computed with an earlier version of its
+    """Recompute: the results of a block of the workflow computed with an earlier version of its
     method are computed again with today's code, in their place, and, as for a change of setting, every result made
     from them. The plan says what it costs before anything runs."""
     return _stamp(p, _r2().plan_recompute(_keys(p).project, wf, block, **_plan_kw(p, device, history)))

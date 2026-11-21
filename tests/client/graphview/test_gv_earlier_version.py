@@ -1,6 +1,6 @@
 """A block whose result was computed with an earlier version of its method: it stays "Up to date", with a small mark
 and one line in its tooltip, "Computed with an earlier version (5 -> 6)"; no message box, no banner. Its menu and its
-panel have a visible command, "Recompute (current version)", which opens the run's plan (what it computes again and
+panel have a visible command, "Recompute", which opens the run's plan (what it computes again and
 how long) before anything runs. A block made from a result recomputed since is Outdated and says why. On a graph held
 in memory; the panel and the plan on the computed test project (test_real_*)."""
 from __future__ import annotations
@@ -15,7 +15,7 @@ from conftest import full_only, needs_test_project, scratch_project  # (tests/co
 
 EN = "Computed with an earlier version (5 -> 6)"
 FR = "Calculé avec une version antérieure (5 -> 6)"
-CMD_EN, CMD_FR = "Recompute (current version)", "Recalculer (version actuelle)"
+CMD_EN, CMD_FR = "Recompute", "Recalculer"
 
 
 def _page(doc):
@@ -66,7 +66,7 @@ def test_the_block_says_it_discreetly_and_stays_up_to_date(qapp, boxes):
     # amber, as a block that needs an update (the reference node editors): the band, with its reason and its action
     from astro_gpu.client.graphview.style import STATE_COL
     assert gr.band_colour() == STATE_COL["earlier"] != STATE_COL["done"] and st.band_colour() == STATE_COL["done"]
-    assert "Recompute (current version) to bring it up to date" in gr.toolTip()
+    assert "Recompute to bring it up to date" in gr.toolTip()
     banner = getattr(p, "banner", None)
     assert banner is None or not banner.isVisible()
     p.close()
@@ -107,11 +107,11 @@ def test_the_words_are_french(qapp):
         msg = UNREADABLE.format(title="Stars/background", old="5", new="6", error="KeyError: 'model'")
         assert not is_raw_error(msg) and engine_text(msg) == (
             "le résultat du bloc Étoiles/fond a été calculé avec une version antérieure (5 -> 6), que cette version "
-            "ne sait peut-être plus lire : recalculez-le avec « Recalculer (version actuelle) » sur ce bloc")
+            "ne sait peut-être plus lire : recalculez-le avec « Recalculer » sur ce bloc")
         appmod.apply_language("en")
         assert engine_text(msg) == (
             "the result of the Stars/background block was computed with an earlier version (5 -> 6), which this "
-            "version may no longer read: recompute it with “Recompute (current version)” on that block")
+            "version may no longer read: recompute it with “Recompute” on that block")
         p.close()
     finally:
         appmod.apply_language("en")
@@ -220,3 +220,64 @@ def test_a_block_of_an_earlier_version_is_counted_by_one_rule_for_the_graph_the_
     assert earlier_blocks(m) == 1
     nodes[0].cut = True                                         # cut: nothing is said of a block that is not run
     assert earlier_blocks(m) == 0
+
+
+def test_run_is_never_up_to_date_over_a_block_of_an_earlier_version_and_says_where_the_command_is():
+    """The Run button greyed with "All up to date" while a block's result is of an earlier version said the opposite
+    of the graph's amber block: it says how many, and where Recompute is."""
+    from astro_gpu.client import app as appmod
+    info = {"gradient": api.StageState("done", "", "k1", earlier=("5", "6"))}
+    p = SimpleNamespace(pid=1, params={}, opts={})
+    node = SimpleNamespace(key="fond", ref="fond", paths=[p], sid=None, cut=False, grey="", waits="")
+    bm = SimpleNamespace(nodes=[node], state=lambda n: "done", session_stages=lambda q, sid: None)
+    m = SimpleNamespace(ready=True, paths=[p], has_data=lambda: True, p=SimpleNamespace(workflows=[SimpleNamespace(blocks=None)]),
+                        state_info=lambda q, st: info.get(st), state=lambda q, st: "done", block_map=bm,
+                        all_stages=lambda q: list(info))
+    fake = SimpleNamespace(s=m, waiting_text=lambda: "")
+    none = SimpleNamespace(jobs=0)
+    assert appmod.Main.run_refusal(fake, none) == "1 block in an earlier version: Recompute, on the block"
+    info.clear()
+    assert appmod.Main.run_refusal(fake, none) == "All up to date"
+
+
+def test_the_blocks_of_an_earlier_version_of_some_workflows_are_found_in_the_graph_s_order():
+    from astro_gpu.client.graphnode import earlier_nodes_of
+    info = {"gradient": api.StageState("done", "", "k1", earlier=("5", "6")),
+            "color": api.StageState("done", "", "k3")}
+    p1, p2 = SimpleNamespace(pid=1, params={}, opts={}), SimpleNamespace(pid=2, params={}, opts={})
+    node = lambda key, q: SimpleNamespace(key=key, ref=key, paths=[q], sid=None, cut=False, grey="")  # noqa: E731
+    nodes = [node("fond", p1), node("couleur", p1), node("fond", p2)]
+    bm = SimpleNamespace(nodes=nodes, state=lambda n: "done", session_stages=lambda q, sid: None)
+    m = SimpleNamespace(state_info=lambda q, st: info.get(st), state=lambda q, st: "done", block_map=bm,
+                        all_stages=lambda q: list(info))
+    assert earlier_nodes_of(m, {1}) == [nodes[0]] and earlier_nodes_of(m, {2}) == [nodes[2]]
+    assert earlier_nodes_of(m, {1, 2}) == [nodes[0], nodes[2]] and earlier_nodes_of(m, set()) == []
+
+
+def test_recompute_of_several_blocks_is_one_plan_in_one_window(qapp):
+    """Post's Recompute (several blocks, one plan: a result two of them share is computed once)."""
+    from astro_gpu.client.services.run import RunController
+    seen = {}
+
+    class Model:
+        scope = None
+
+        def view(self, pid):
+            return SimpleNamespace(pid=pid)
+
+        def plan_recompute(self, views, key):
+            return SimpleNamespace(jobs=[SimpleNamespace(key=f"{key}-{v.pid}") for v in views] +
+                                   [SimpleNamespace(key="shared")], targets=[], skipped={}, rules=None)
+
+        def _one_plan(self, plans):
+            seen["plans"] = plans
+            return plans
+
+    opened = {}
+    fake = SimpleNamespace(model=Model(), running=False, before_run=lambda: True, scope=None,
+                           block_name=lambda p, key: key,
+                           _plan_and_open=lambda planner, title, **k: opened.update(plan=planner(), title=title()))
+    p1, p2 = SimpleNamespace(pid=1), SimpleNamespace(pid=2)
+    RunController.recompute_blocks(fake, [([p1], "fond"), ([p2], "etoiles")])
+    assert len(seen["plans"]) == 2 and fake.scope == {1, 2}
+    assert opened["title"] == "Recompute “fond, etoiles” (current version)"

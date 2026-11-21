@@ -12,7 +12,7 @@ Jobs come in dependency order; among the jobs ready to run, those of the workflo
 first, so cheap workflows finish first.
 
 A done result is used, whatever version of its stage's method computed it (core/store.py: the version is in no key).
-``redo``: a done result recomputed in its place, under the same key: asked for ("Recompute (current version)",
+``redo``: a done result recomputed in its place, under the same key: asked for ("Recompute",
 ``plan_recompute``), or made from an upstream result recomputed since (store.Upstream: the stamps the manifests
 record). Its job has ``redo`` set; the worker gives the new result a new stamp, so that what was made from the earlier
 one is to recompute, even when the run stops before it gets there.
@@ -115,7 +115,7 @@ GPU_LOST_END = "the graphics card stopped responding during {stage} and the run 
 #: a job that failed on an unexpected error while a result it reads is of an earlier version of its stage's method;
 #: ``title``: the block as the graph shows it ("Stars/background"), the command the one of its menu and panel
 UNREADABLE = ("the result of the {title} block was computed with an earlier version ({old} -> {new}), which this "
-              "version may no longer read: recompute it with “Recompute (current version)” on that block ({error})")
+              "version may no longer read: recompute it with “Recompute” on that block ({error})")
 
 
 def unreadable_words(chains: Any, stage: str, old: str, new: str, error: str) -> str:
@@ -421,7 +421,7 @@ def plan_to_block(project: Project2, wf: int | Workflow, block: str, **kw: Any) 
 
 
 def plan_recompute(project: Project2, wf: int | Workflow, block: str, **kw: Any) -> Plan:
-    """Recompute (current version): the done results of a block of the workflow computed again with today's code, in
+    """Recompute: the done results of a block of the workflow computed again with today's code, in
     their place (the same keys), and, as for a change of setting, every done result made from them, in every workflow.
     The block's results of an earlier version are the ones recomputed; all of them when none is."""
     kw = dict(kw)
@@ -1273,7 +1273,7 @@ class _Worker:
             pass
         om = self.store.manifest(job.stage, job.key)
         same = result_values(om.get("params") or {}) == result_params(p)
-        # a result recomputed in its place (Recompute (current version)) makes its masters again: that is what is asked
+        # a result recomputed in its place (Recompute) makes its masters again: that is what is asked
         # (the hot-pixel map of version 12 differs from version 11's with the same settings); a cache merely lost is
         # rebuilt with the result's own masters, whatever version made them, so that what was made from it still holds
         if getattr(job, "redo", False) or not same or not all((old / n).is_file() for n in MASTER_FILES):

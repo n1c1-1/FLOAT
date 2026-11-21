@@ -3195,7 +3195,7 @@ class _ProjectBase(QObject):
         return self._cache[k]
 
     def plan_recompute(self, paths, key: str):
-        """The plan of "Recompute (current version)" for a block of the views, in the workflows going through it: its
+        """The plan of "Recompute" for a block of the views, in the workflows going through it: its
         results of an earlier version computed again with today's code, in their place, and what was made from them
         (api.plan_recompute). Not kept: asked when the user chooses the command."""
         if not self.ready:
