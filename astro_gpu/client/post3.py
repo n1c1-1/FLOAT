@@ -2423,6 +2423,8 @@ class PostView(QWidget):
         self._before_gen += 1
         self._before_empty = False
         self.before.full = None
+        if hasattr(self.worker, "cancel"):
+            self.worker.cancel("before_exact")                  # (an older choice's full resolution: not wanted now)
         layers, plain = self._before_layers_of()
         self.worker.request(Request(kind="before", layers=snapshot(layers), level=self.screen_level(), plain=plain,
                                     canvas=self._canvas, tag=self._before_gen))
@@ -2504,12 +2506,21 @@ class PostView(QWidget):
     def _on_before(self, res):
         """The compared side's answer (a picture of the other version's layers, or of the suggested settings, and its
         visible region at full resolution). Only the shown side's results speak for the shown picture: an answer of the
-        compared side with no picture leaves it alone and is asked again with the shown side's next render."""
+        compared side with no picture leaves it alone and is asked again with the shown side's next render. Its picture is
+        then made again from the full resolution ("before_exact"), as the shown side's is (``_exact_wanted``): a reduced
+        picture beside an exact one differs by its filters (Saturation, the detail ones) and read as another version."""
         if res.tag is not None and res.tag != self._before_gen:  # (not an older choice's picture)
             return
         if res.kind == "before":
             self._before_empty = res.rgb is None
             self.before.img1, self.before.level1 = res.rgb, res.level
+            if res.rgb is not None and self.viewer.scale < 0.5:
+                layers, plain = self._before_layers_of()
+                self.worker.request(Request(kind="before_exact", layers=snapshot(layers), level=res.level, plain=plain,
+                                            canvas=self._canvas, tag=res.tag))
+        elif res.kind == "before_exact":
+            if res.rgb is not None:
+                self.before.img1, self.before.level1 = res.rgb, res.level
         elif res.rgb is not None:
             self.before.full = (res.box, res.rgb)
         self.before.version += 1
@@ -2536,7 +2547,7 @@ class PostView(QWidget):
                 self.viewer.refresh()
                 self.rendered.emit(res)
             return
-        if res.kind in ("before", "before_region"):             # the compared side: never the shown picture's state (an
+        if res.kind in ("before", "before_region", "before_exact"):   # the compared side: never the shown picture's state (an
             self._on_before(res)                                # answer with no picture is its own, not "nothing to show")
             return
         if res.seq < self._last_seq.get(res.kind, 0):

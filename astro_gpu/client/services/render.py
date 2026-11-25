@@ -871,9 +871,10 @@ class Result:
 _RETIRED: list = []                    # workers asked to stop that were still busy: kept until their thread ends
 #: the full resolution after a release ("exact") in a lane of its own: in the background, abandoned for any change
 #: (a draft, the next release) and taken up again after a request of another lane (a region, Inspect's)
+#: the compared side of Compare has its own ("before_exact"), after the shown side's: the two halves are made the same way
 LANES = {"draft": "main", "half": "main", "refine": "main", "exact": "full", "region": "region", "before": "before",
-         "before_region": "before_region", "inspect": "inspect", "thumbs": "thumbs"}
-PRIORITY = ("main", "region", "before", "before_region", "inspect", "full", "thumbs")
+         "before_region": "before_region", "before_exact": "before_exact", "inspect": "inspect", "thumbs": "thumbs"}
+PRIORITY = ("main", "region", "before", "before_region", "inspect", "full", "before_exact", "thumbs")
 
 
 def to_u8(a: np.ndarray) -> np.ndarray:
@@ -925,11 +926,11 @@ class Renderer:
             self.source.keep_images({lay["key"] for lay in req.layers if lay.get("kind") == "image"})
         if req.kind == "thumbs":
             return self._thumbs(req, stop, t0)
-        if req.kind == "exact":
-            return self._exact(req, stop, t0)
         layers = req.layers
-        if req.kind in ("before", "before_region") and not req.plain:
+        if req.kind in ("before", "before_region", "before_exact") and not req.plain:
             layers = self._before_layers(layers)
+        if req.kind in ("exact", "before_exact"):
+            return self._exact(req, stop, t0, layers)
         if req.kind == "half" and req.refine and req.box is None and emit is not None:
             first = Request(kind="refine", layers=layers, level=req.level + 1, want=req.want, overlay=req.overlay,
                             hists=req.hists, seq=req.seq, tag=req.tag)
@@ -965,20 +966,23 @@ class Renderer:
         res.ms = 1000 * (time.perf_counter() - t0)
         return res
 
-    def _exact(self, req: Request, stop, t0) -> Result:
+    def _exact(self, req: Request, stop, t0, layers) -> Result:
         """The half image made from the full resolution (GUI exploration 4, Q1): the composition at level 0, clipped as
         the export writes it, then reduced. A filter run on the reduced image sees its colour noise already averaged
-        (a strong Saturation turned the sky another colour on screen than in the file); this one shows the file."""
+        (a strong Saturation turned the sky another colour on screen than in the file); this one shows the file.
+        "before_exact": the compared side's, on the shown side's canvas (``req.canvas``), so that both halves of a
+        compare are made the same way (the reduced one beside the exact one read as another version)."""
         cp = self.composer
-        comp = cp.compose(req.layers, 0, stop=stop, track=True)
+        mine = req.kind == "exact"
+        comp = cp.compose(layers, 0, stop=stop, track=mine, canvas=None if mine else req.canvas)
         if stop is not None and stop():
             raise Superseded()
-        canvas = cp.canvas_of(req.layers)
+        canvas = cp.canvas_of(layers) if mine or req.canvas is None else req.canvas
         if comp is None or canvas is None:
-            return Result(req.seq, "exact", req.level, None, None, None, device=self.device, tag=req.tag)
+            return Result(req.seq, req.kind, req.level, None, None, None, device=self.device, tag=req.tag)
         w, h = canvas.size(req.level)
         small = cv2.resize(np.clip(comp.rgb, 0, 1), (w, h), interpolation=cv2.INTER_AREA)
-        res = Result(req.seq, "exact", req.level, None, to_u8(small), canvas, device=self.device, tag=req.tag)
+        res = Result(req.seq, req.kind, req.level, None, to_u8(small), canvas, device=self.device, tag=req.tag)
         res.layer_ms, res.drawn, res.notes = self.source.engine_ms, comp.drawn, comp.notes
         res.ms = 1000 * (time.perf_counter() - t0)
         return res
@@ -1562,7 +1566,7 @@ class RenderWorker(QObject):
             except Superseded:
                 with self._cond:
                     # abandoned for a more urgent lane: kept (the full resolution: not for a change, it is stale)
-                    keep = lane in ("region", "before", "before_region", "inspect", "thumbs") or (lane == "full" and "main" not in
+                    keep = lane in ("region", "before", "before_region", "before_exact", "inspect", "thumbs") or (lane == "full" and "main" not in
                                                                                   self._slots)
                     if keep and lane not in self._slots and not self._stopping:
                         self._slots[lane] = work

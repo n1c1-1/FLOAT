@@ -1,4 +1,4 @@
-"""Post's Compare (#172): the picture split by a divider, another version left of it, the version shown right, driven as
+﻿"""Post's Compare (#172): the picture split by a divider, another version left of it, the version shown right, driven as
 the block editors' Split is. Real gestures on the page (keys, mouse), offscreen."""
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from PySide6.QtGui import QImage, QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication
 from PySide6.QtTest import QTest
 
-from test_post import _settings, named, post, preps, qapp, shown  # noqa: F401
+from test_post import _settings, named, post, preps, qapp, shown, wide  # noqa: F401
 
 from astro_gpu.client import i18n, imageview_canvas, post3, postengine, viewer as viewer_mod
 from astro_gpu.client.post3 import SUGGESTED
@@ -295,6 +295,39 @@ def test_two_versions_differing_by_a_slider_are_on_one_grid_across_the_divider(p
     assert shift == (0, 0) and diff < 12, (shift, diff)
     # the picture drawn: the columns on each side of the divider are the same canvas columns
     assert v.viewer.compare.size() == v.viewer.source.size()
+
+
+def test_the_compared_version_is_the_picture_that_version_shows(wide):
+    """The report: the left of Compare looked like a mix of the versions, never the one chosen. The shown side is made
+    again from the full resolution after its release (``_exact_wanted``), the compared side was only the reduced
+    picture: a filter that depends on the scale (here Saturation) made the left another picture than the version's
+    own. The left is now made the same way: a version on the left is the very picture it shows on the right."""
+    import numpy as np
+    post = wide
+    v, p = post.view, post.model.p
+    wf = next(x for x in v.layers if x.get("kind") == "workflow" and x.get("visible"))
+    sat = postengine.new_filter_layer("saturation", None)
+    sat["params"]["strength"] = 150.0
+    first = p.post["versions"][0]
+    first["layers"] = postengine.save_layers(v.layers)
+    second = {"id": 2, "name": "Version 2", "layers": postengine.save_layers([sat]) + postengine.with_new_ids(
+        first["layers"]), "crop": None}
+    p.post = {**p.post, "versions": [first, second], "active": 2}
+    v._post_changed(None)
+
+    def pick(vid):
+        p.post = {**p.post, "active": vid}
+        v._post_changed(None)
+    post.model.set_post_version = pick
+    assert post.settle() and v.viewer.scale < 0.5 and wf is not None
+    own = v.src.img1.astype(np.int16)                                         # Version 2 shown: its own picture
+    pick(1)
+    assert post.settle()
+    v.b_cmp.setChecked(True)
+    assert post.settle() and v.cb_cmp.currentData() == 2
+    left = v.before.img1.astype(np.int16)
+    assert left.shape == own.shape and np.abs(left - own).max() <= 1
+    assert np.abs(v.src.img1.astype(np.int16) - own).mean() > 1               # (Version 1 is another picture)
 
 
 def _bar_geometry(v):
