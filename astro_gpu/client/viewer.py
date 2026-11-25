@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QRegion
 from PySide6.QtWidgets import QWidget
 
 from .imageview_canvas import draw_split
@@ -68,6 +68,7 @@ class Viewer(QWidget):
         self.cx = self.cy = 0.0
         self.mode = "pan"                                 # pan | rect | brush | heal | crop
         self.crop_box = None                              # (x0, y0, x1, y1), image pixels: what is outside is not shown
+        self.compare_crop = None                          # the compared version's own crop (None: its whole picture)
         self.crop_edit = False                            # the Crop tool is on: outside only dimmed, with the handles
         self.crop_ratio = None                            # width / height of a fixed proportion
         self.brush_r = 30.0
@@ -100,8 +101,7 @@ class Viewer(QWidget):
     def fit(self):
         if not self.source:
             return
-        w, h = self.source.size()
-        x0, y0, x1, y1 = self.crop_box if self.crop_box and not self.crop_edit else (0, 0, w, h)
+        x0, y0, x1, y1 = self.extent()
         self.scale = max(min((self.width() - 16) / (x1 - x0), (self.height() - 16) / (y1 - y0)), 0.02)
         self.cx, self.cy = (x0 + x1) / 2, (y0 + y1) / 2
         self._fitted = False                              # stays fitted when the widget is resized
@@ -213,7 +213,9 @@ class Viewer(QWidget):
             p.restore()
             p.setPen(QPen(QColor("#e6a23c"), 1.5, Qt.DashLine))
             p.drawRect(r)
-        if self.crop_box:
+        if self.compare is not None and not self.crop_edit:
+            self._paint_crops_split(p)
+        elif self.crop_box:
             self._paint_crop(p)
         for ov in self.overlays:
             ov(p, self)
@@ -252,6 +254,21 @@ class Viewer(QWidget):
         p.setBrush(QColor("#e6a23c"))
         for pt in self._crop_points(r).values():
             p.drawRect(QRectF(pt.x() - 4, pt.y() - 4, 8, 8))
+
+    def _paint_crops_split(self, p: QPainter):
+        """Compare: each half is its own version's picture, framed by that version's crop (the shown one's crop hid the
+        compared version too, as if it were every version's); both on the one grid, so a crop only hides."""
+        xs = self.width() * self.curtain
+        halves = ((self.compare_crop, QRectF(0, 0, xs, self.height())),
+                  (self.crop_box, QRectF(xs, 0, self.width() - xs, self.height())))
+        for box, half in halves:
+            if not box:
+                continue
+            r = QRectF(self.img_to_w(*box[:2]), self.img_to_w(*box[2:]))
+            p.save()
+            p.setClipRegion(self._outside(r).intersected(QRegion(half.toAlignedRect())))
+            p.fillRect(self.rect(), QColor(15, 17, 21, 255))
+            p.restore()
 
     @staticmethod
     def _crop_points(r: QRectF) -> dict:
@@ -319,9 +336,16 @@ class Viewer(QWidget):
     # ------------------------------------------------------------ minimap (issue #44: as the Inspect viewer's)
     def extent(self) -> tuple:
         """What the picture is, in image pixels (x0, y0, x1, y1): the crop once applied, else the whole image (#144:
-        the minimap showed the whole image over a cropped picture fitted to the view)."""
+        the minimap showed the whole image over a cropped picture fitted to the view). Compare: what either version
+        shows, each by its own crop."""
         w, h = self.source.size()
-        return tuple(self.crop_box) if self.crop_box and not self.crop_edit else (0, 0, w, h)
+        if self.crop_edit:
+            return 0, 0, w, h
+        own = tuple(self.crop_box) if self.crop_box else (0, 0, w, h)
+        if self.compare is None:
+            return own
+        other = tuple(self.compare_crop) if self.compare_crop else (0, 0, w, h)
+        return (min(own[0], other[0]), min(own[1], other[1]), max(own[2], other[2]), max(own[3], other[3]))
 
     def whole_visible(self) -> bool:
         if not self.source:

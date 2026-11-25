@@ -1986,7 +1986,26 @@ class PostView(QWidget):
         if not hasattr(self, "viewer"):
             return
         self.viewer.compare_names = (self.cb_cmp.currentText(), self.cb_version.currentText())
+        self._sync_compare_crop()
         self.viewer.update()
+
+    def _sync_compare_crop(self):
+        """Compare: the compared side framed by its own version's crop (the suggested settings: the shown version's),
+        the shown side by its own; the view fits both when it was fitted (a crop is a version's, never every version's)."""
+        vw = self.viewer
+        box = None
+        if self.b_cmp.isChecked():
+            other = self._compared()
+            crop = self.crop if other is None else other.get("crop")
+            if crop:
+                box = crop_within(crop, *self.src.canvas) if self.src.canvas is not None else tuple(crop)
+        vw.compare_crop = box
+        if vw.source:
+            ext = vw.extent()
+            if ext != getattr(self, "_view_extent", None):
+                self._view_extent = ext
+                if not vw._fitted:
+                    vw.fit()
 
     def _compared_changed(self, *_a):
         """Another item chosen in the Compare list: its picture is asked for (view state: no step of Undo)."""

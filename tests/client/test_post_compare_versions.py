@@ -330,6 +330,48 @@ def test_the_compared_version_is_the_picture_that_version_shows(wide):
     assert np.abs(v.src.img1.astype(np.int16) - own).mean() > 1               # (Version 1 is another picture)
 
 
+def test_each_side_of_compare_is_framed_by_its_own_version_s_crop(post):
+    """The report: a crop seemed to apply to every version. Each version keeps its own crop; but in Compare the shown
+    version's crop hid the compared version too. Now each half is hidden outside its own version's crop only, the view
+    fits what either shows, and Compare off is the shown version's crop again."""
+    v, p = post.view, post.model.p
+    first, second = _two_versions(post)
+    v.b_crop.setChecked(True)                                                 # Version 1 cropped, Version 2 not
+    v.viewer.crop_box = (60, 50, 200, 150)
+    v._crop_drawn()
+    v.crop_apply()
+    v._save()
+    assert first["crop"] == [60, 50, 200, 150] and second.get("crop") is None
+    v.resize(1000, 700)
+    v.show()
+    v.viewer.curtain = 0.5
+    v.b_cmp.setChecked(True)
+    assert post.settle() and v.cb_cmp.currentData() == 2
+    vw = v.viewer
+    W, H = v.src.canvas
+    assert vw.compare_crop is None and vw.crop_box == (60, 50, 200, 150)
+    assert vw.extent() == (0, 0, W, H)                                         # the whole of Version 2 is in view
+    img = vw.grab().toImage()
+
+    def at(x, y):
+        q = vw.img_to_w(x, y)
+        return q, img.pixelColor(int(q.x()), int(q.y())).name()
+    q, left = at(30, 25)                                                       # outside Version 1's crop, left half
+    assert q.x() < vw.width() * vw.curtain and left != "#0f1115"               # Version 2 shows there
+    q, right = at(W - 20, H - 20)                                              # outside it, right half
+    assert q.x() > vw.width() * vw.curtain and right == "#0f1115"              # Version 1 is cropped there
+    v.cb_version.setCurrentIndex(v.cb_version.findData(2))                     # Version 2 shown: Version 1 compared
+    v._version_picked(v.cb_version.currentIndex())
+    assert post.settle() and v.cb_cmp.currentData() == 1
+    assert vw.crop_box is None and vw.compare_crop == (60, 50, 200, 150)
+    assert first["crop"] == [60, 50, 200, 150] and second.get("crop") is None  # nothing written by comparing
+    v.b_cmp.setChecked(False)
+    assert vw.extent() == (0, 0, W, H)
+    v.cb_version.setCurrentIndex(v.cb_version.findData(1))
+    v._version_picked(v.cb_version.currentIndex())
+    assert post.settle() and vw.extent() == (60, 50, 200, 150)
+
+
 def _bar_geometry(v):
     """Every widget of the top bar: (text, geometry in the bar's parent)."""
     out = []
