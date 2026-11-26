@@ -4,7 +4,7 @@
     python installer/build.py lock       # regenerates installer/lock/lock.json (then build)
     python installer/build.py --out D:/x
     python installer/build.py asterion --stage D:/x   # stages the plate solver's folder alone (a check, no .exe)
-    python installer/build.py catalogue  # pins the star catalogue's 49 files (from the local folders) in the lock
+    python installer/build.py catalogue  # pins the star catalogue's 52 files (from the local folders) in the lock
 
 The lock file: the versions of the environment the tests pass on (``uv pip freeze`` of LOCK_SOURCE), restricted to
 pyproject's dependencies and what they need, for two builds of PyTorch (CUDA and CPU), with each wheel's URL, size and
@@ -69,6 +69,10 @@ CATALOGUE_ASTRO = Path("F:/astro_essais/_a_effacer/agent_reduce/extracts/siril_c
 CATALOGUE_XP = Path("F:/astro_essais/_a_effacer/agent_compact/extracts/float_xp_compact")
 CATALOGUE_XP_DIR = "float_xp_compact"                  # the sub-folder the reader (core/sirilcat) expects
 CATALOGUE_CHUNKS = 48
+#: the bright stars the Catalogues step and the blind solver read: the Hipparcos list (in ``hipparcos``) and the two quad
+#: indexes of the blind solver, three more assets of the same release, built once from the lists of the sky
+CATALOGUE_BRIGHT = Path.home() / ".astro_gpu" / "cache"
+CATALOGUE_BRIGHT_FILES = (("hipparcos/hip_main_v9.npz", "hipparcos"), ("quads_hip_k8.npz", ""), ("quads_tyc_k7.npz", ""))
 
 
 def run(*cmd, **kw):
@@ -188,11 +192,12 @@ def make_lock() -> dict:
 
 
 def catalogue_part(astro: Path = CATALOGUE_ASTRO, xp: Path = CATALOGUE_XP, tag: str = CATALOGUE_TAG,
-                   repo: str = CATALOGUE_REPO, hashed=None) -> dict:
+                   repo: str = CATALOGUE_REPO, hashed=None, bright: Path = CATALOGUE_BRIGHT) -> dict:
     """The lock's ``star_catalogue`` part from the local files: size and SHA-256 of each, the URL its release asset will
     have (assets are flat: the folder a file goes to is its ``dest``). ``hashed``: the function measuring a file."""
     hashed = hashed or sha256_file
     files = [(astro, "")] + [(xp / f"{CATALOGUE_XP_DIR}_{n}.dat", CATALOGUE_XP_DIR) for n in range(CATALOGUE_CHUNKS)]
+    files += [(bright / rel, dest) for rel, dest in CATALOGUE_BRIGHT_FILES]
     out = []
     for path, dest in files:
         if not path.is_file():

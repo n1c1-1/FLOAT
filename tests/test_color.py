@@ -4,14 +4,31 @@ from __future__ import annotations
 import numpy as np
 
 
-def test_spectra_of_two_grids_are_brought_to_one():
-    from astro_gpu.core import gaia_archive as ga
-    wide = (ga.XP_WAVELENGTHS.copy(), np.linspace(1, 2, ga.XP_WAVELENGTHS.size))
-    narrow = (ga.GAVO_XP_WAVELENGTHS.copy(), np.linspace(1.1, 1.5, 41))
-    rows = ga.common_grid([wide, None, narrow])
+def test_spectra_of_two_grids_are_brought_to_one(tmp_path, monkeypatch):
+    """The Catalogues step reads spectra of two grids (the 2 nm sampled ones of the extract, the 10 nm ones an earlier
+    version cached): one grid, 400-800 nm every 10 nm, for all."""
+    from astro_gpu.core import skycache, sirilcat
+    from astro_gpu.stages import catalogs
+    monkeypatch.setenv("ASTRO_GPU_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(skycache.Path, "home", classmethod(lambda cls: tmp_path / "userhome"))
+    monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", "")
+    monkeypatch.setenv("ASTRO_GPU_SIRIL_CATALOGUES", "")
+    sirilcat.reset()
+    wide = (sirilcat.XP_WAVELENGTHS.astype(float), np.linspace(1, 2, len(sirilcat.XP_WAVELENGTHS)))
+    narrow = (catalogs.XP_GRID.copy(), np.linspace(1.1, 1.5, 41))
+    skycache.save_npy(skycache.cache_dir() / "xp" / "11.npy", np.stack(wide))
+    skycache.save_npy(skycache.cache_dir() / "xp" / "12.npy", np.stack(narrow))
+
+    class Ctx:
+        def log(self, *a):
+            pass
+
+        def progress(self, *a):
+            pass
+    rows = catalogs._xp_spectra(Ctx(), np.array([11, 13, 12]), 0.85, 1.0)
     assert rows[1] is None and all(len(r[0]) == 41 for r in (rows[0], rows[2]))
-    assert np.allclose(rows[0][1], np.interp(ga.GAVO_XP_WAVELENGTHS, *wide))
-    assert ga.common_grid([wide, wide])[0] is wide
+    assert np.allclose(rows[0][1], np.interp(catalogs.XP_GRID, *wide))
+    assert np.array_equal(rows[2][1], narrow[1])
 
 
 def test_the_stars_white_balance_brings_the_white_reference_to_white():

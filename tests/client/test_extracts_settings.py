@@ -1,6 +1,6 @@
-"""Settings › Catalogs & astrometry: the "Offline Gaia extracts" section, offscreen.
+"""Settings › Catalogs & astrometry: the "Offline star data" section, offscreen.
 
-Folder, state of each extract, the two downloads run off the GUI thread, progress, cancel. The download itself is
+Folder, state of the star data, the one download that installs every missing file, run off the GUI thread, progress, cancel. The download itself is
 replaced by a function that reports progress (its real behaviour: tests/test_gaia_extracts.py); nothing is written
 outside a scratch folder.
 """
@@ -96,45 +96,50 @@ def _tiny_astro(path: Path):
 
 
 def _fake_catalogue(folder: Path):
-    """The 49 files of the catalogue as valid tiny extracts (positions and 48 compact chunks) in ``folder``."""
+    """The 52 files of the star data as valid tiny files (positions, 48 compact chunks, the Hipparcos list and the blind
+    solver's two indexes) in ``folder``."""
     import test_sky_catalogue as t
     for name, (sub, body) in t._bodies().items():
         (folder / sub).mkdir(parents=True, exist_ok=True)
         (folder / sub / name).write_bytes(body)
 
 
-def test_the_section_shows_the_folder_the_state_and_the_two_downloads(env, qapp):
+def test_the_section_shows_the_folder_the_state_and_the_one_download(env, qapp):
     d, page = _page(qapp)
     shown = _texts(page)
     assert "Offline star data" in shown and "Nothing is fetched while a project runs" in " ".join(shown)
     assert "online" not in " ".join(_gaia(shown))
-    assert "Star catalogue" in shown and "Install (1.85 GB)" in shown
-    assert "Positions and colours of the stars, 1.85 GB · needed by Astrometry and Color" in shown
-    assert _gaia(shown).count("Not installed") == 2 and "Open folder" in shown        # the bright stars too
+    assert "Star data" in shown and "Install (2.59 GB)" in shown
+    assert "Star positions and colours, Hipparcos stars, blind solver indexes · needed by Astrometry and Color" in shown
+    assert not [t for t in shown if "marked" in t or "left out" in t]           # no block is marked or left out any more
+    assert _gaia(shown).count("Not installed") == 1 and "Open folder" in shown
+    assert not [t for t in shown if "Bright stars" in t or "Install bright" in t]       # one button, not two rows
     assert not [t for t in shown if "Zenodo" in t or "Download positions" in t or "Download spectra" in t
-                or "Star spectra" in t or "Star positions" in t]                       # the full extracts are not offered
+                or "Star spectra" in t or t.startswith("Star positions")
+                and "Hipparcos" not in t]                                  # the full extracts are not offered
     assert not [t for t in shown if "Gaia DR3 folder" in t or "12 GB" in t or "◇" in t]      # the old, unbuilt widgets
     edit = next(e for e in page.findChildren(QLineEdit) if e.text() == str(sc.folder()))
     assert edit.isReadOnly() and sc.folder() == env / "home" / "cache" / "gaia_extracts"
     assert not [b for b in page.findChildren(QProgressBar) if b.isVisibleTo(page)]            # idle: no bar
-    b = _button(page, "Install (")
+    assert len([b for b in page.findChildren(QPushButton) if b.text().startswith("Install")]) == 1
+    b = _button(page, "Install")
     assert b.isEnabled() and "cache folder" in b.toolTip()
     assert "full Gaia extracts are also read" in b.toolTip()             # said on the row too
     assert not sc.folder().exists()                                  # looking at the page writes nothing
     d.close()
 
 
-def test_the_row_says_which_blocks_need_the_catalogue(env, qapp):
-    needed = "Positions and colours of the stars, 1.85 GB · needed by Astrometry and Color"
+def test_the_row_says_which_blocks_need_the_star_data(env, qapp):
+    needed = "Star positions and colours, Hipparcos stars, blind solver indexes · needed by Astrometry and Color"
     d, page = _page(qapp)
     shown = _gaia(_texts(page))
-    assert shown.index("Star catalogue") < shown.index(needed)
+    assert shown.index("Star data") < shown.index(needed)
     d.close()
     i18n.set_language("fr")
     d, page = _page(qapp)
     shown = _texts(page)
-    assert "Catalogue d'étoiles" in shown and "Installer (1,85 Go)" in shown
-    assert "Positions et couleurs des étoiles, 1,85 Go · nécessaire à l'astrométrie et à la couleur" in shown
+    assert "Données d'étoiles" in shown and "Installer (2,59 Go)" in shown
+    assert "Positions et couleurs des étoiles, étoiles Hipparcos, index du solveur à l'aveugle · nécessaire à l'astrométrie et à la couleur" in shown
     d.close()
 
 
@@ -144,8 +149,8 @@ def test_the_states_of_the_row_and_its_button(env, qapp):
     sirilcat.reset()
     d, page = _page(qapp)
     assert "Found in another program's data folder" not in " ".join(_texts(page))      # not complete: partly
-    assert "Partly downloaded: 1 of 49 files" in _texts(page)                          # the positions only
-    assert _button(page, "Install (").isEnabled()
+    assert "Partly downloaded: 1 of 52 files" in _texts(page)                          # the positions only
+    assert _button(page, "Install").isEnabled()
     (other / ASTRO_NAME).unlink()
     # a download stopped half-way
     (sc.folder() / "float_xp_compact").mkdir(parents=True)
@@ -161,8 +166,8 @@ def test_the_states_of_the_row_and_its_button(env, qapp):
     d.rebuild()
     qapp.processEvents()
     page = d.pages.currentWidget()
-    assert f"Installed: {sc.folder()}" in _texts(page) and _gaia(_texts(page)).count("Not installed") == 1
-    b = _button(page, "Install (")
+    assert f"Installed: {sc.folder()}" in _texts(page) and _gaia(_texts(page)).count("Not installed") == 0
+    b = _button(page, "Install")
     assert not b.isEnabled() and b.toolTip() == f"Already installed: {sc.folder()}"
     d.close()
 
@@ -173,22 +178,29 @@ def test_a_catalogue_found_elsewhere_greys_the_button_and_says_where(env, qapp):
     sirilcat.reset()
     d, page = _page(qapp)
     assert f"Found in another program's data folder: {elsewhere}" in _texts(page)
-    b = _button(page, "Install (")
+    b = _button(page, "Install")
     assert not b.isEnabled() and str(elsewhere) in b.toolTip()
     d.close()
 
 
 def test_the_full_extracts_of_a_former_install_are_still_read(env, qapp):
-    """48 sampled-spectra chunks and the positions in our folder: installed, button greyed, nothing to download."""
+    """48 sampled-spectra chunks and the positions in our folder, with FLOAT's own three files: installed, button greyed,
+    nothing to download; without them, the three are what is left to install."""
     import test_gaia_extracts as t
+    import test_sky_catalogue as tc
     own = sirilcat.own_dir()
     (own / "siril_cat1_healpix8_xpsamp").mkdir(parents=True)
     (own / ASTRO_NAME).write_bytes(t._astro_file(n=10))
     for n in range(48):
         (own / "siril_cat1_healpix8_xpsamp" / f"siril_cat1_healpix8_xpsamp_{n}.dat").write_bytes(t._xp_file(n))
     sirilcat.reset()
+    assert [w.filename for w in sc.missing()] == ["hip_main_v9.npz", "quads_hip_k8.npz", "quads_tyc_k7.npz"]
+    for name, (sub, body) in tc._bodies().items():
+        if name.endswith(".npz"):
+            (own / sub).mkdir(parents=True, exist_ok=True)
+            (own / sub / name).write_bytes(body)
     d, page = _page(qapp)
-    assert f"Installed: {own}" in _texts(page) and not _button(page, "Install (").isEnabled()
+    assert f"Installed: {own}" in _texts(page) and not _button(page, "Install").isEnabled()
     d.close()
 
 
@@ -199,18 +211,18 @@ def test_a_download_runs_off_the_gui_thread_and_reports(env, qapp, monkeypatch):
     def fake(progress=None, cancel=None, **kw):
         ran_in.append(threading.get_ident())
         progress(0, 1000, "Checking the files")
-        progress(400, 1000, "File 3 of 49: downloading 0.4 GB of 1.0 GB")
+        progress(400, 1000, "File 3 of 52: downloading 0.4 GB of 1.0 GB")
         progress(1000, 1000, "Done")
         _fake_catalogue(sc.folder())
         sirilcat.reset()
     monkeypatch.setattr(sc, "download", fake)
     d, page = _page(qapp)
-    _button(page, "Install (").click()
+    _button(page, "Install").click()
     _wait(qapp, lambda: not extracts.job().running() and "Done." in _texts(d.pages.currentWidget()))
     assert ran_in and ran_in[0] != main
     page = d.pages.currentWidget()
     assert not [b for b in page.findChildren(QProgressBar) if b.isVisibleTo(page)]
-    assert f"Installed: {sc.folder()}" in _texts(page) and not _button(page, "Install (").isEnabled()
+    assert f"Installed: {sc.folder()}" in _texts(page) and not _button(page, "Install").isEnabled()
     d.close()
 
 
@@ -219,7 +231,7 @@ def test_cancel_stops_the_download_and_closing_the_window_does_not(env, qapp, mo
     stopped = []
 
     def slow(progress=None, cancel=None, **kw):
-        progress(100, 1000, "File 1 of 49: downloading 0.1 GB of 0.8 GB")
+        progress(100, 1000, "File 1 of 52: downloading 0.1 GB of 0.8 GB")
         started.set()
         while not cancel.wait(0.01):
             pass
@@ -227,13 +239,13 @@ def test_cancel_stops_the_download_and_closing_the_window_does_not(env, qapp, mo
         raise ge.Cancelled()
     monkeypatch.setattr(sc, "download", slow)
     d, page = _page(qapp)
-    _button(page, "Install (").click()
+    _button(page, "Install").click()
     _wait(qapp, started.is_set)
     _wait(qapp, lambda: any("downloading 0.1 GB" in t for t in _texts(d.pages.currentWidget())))
     page = d.pages.currentWidget()
     bar = next(b for b in page.findChildren(QProgressBar))
     assert bar.isVisibleTo(page) and bar.value() == 100
-    assert not _button(page, "Install (").isEnabled() and not _button(page, "Install bright").isEnabled()   # one at a time
+    assert not _button(page, "Install").isEnabled()                       # one at a time
     d.close()                                                                # the download goes on
     d.deleteLater()
     qapp.processEvents()
@@ -244,7 +256,7 @@ def test_cancel_stops_the_download_and_closing_the_window_does_not(env, qapp, mo
     _wait(qapp, lambda: not extracts.job().running()
           and any(t.startswith("Cancelled.") for t in _texts(d2.pages.currentWidget())))
     assert stopped == ["catalogue"]
-    assert _button(d2.pages.currentWidget(), "Install (").isEnabled()
+    assert _button(d2.pages.currentWidget(), "Install").isEnabled()
     d2.close()
 
 
@@ -253,7 +265,7 @@ def test_an_error_is_shown_in_plain_words(env, qapp, monkeypatch):
         raise ge.DownloadError("Not enough free disk space in X: 1.9 GB needed")
     monkeypatch.setattr(sc, "download", refuse)
     d, page = _page(qapp)
-    _button(page, "Install (").click()
+    _button(page, "Install").click()
     _wait(qapp, lambda: not extracts.job().running() and
           "Not enough free disk space in X: 1.9 GB needed" in _texts(d.pages.currentWidget()))
     d.close()
@@ -266,64 +278,26 @@ def test_the_real_job_fetches_the_pins_from_the_local_server_into_the_cache(env,
     monkeypatch.setattr(sc, "pins", server.pins)
     try:
         d, page = _page(qapp)
-        _button(page, "Install (").click()
+        _button(page, "Install").click()
         _wait(qapp, lambda: not extracts.job().running() and "Done." in _texts(d.pages.currentWidget()), 60)
-        assert sc.status().state == "installed" and len(server.requests) == 49
+        assert sc.status().state == "installed" and len(server.requests) == 52
         d.close()
     finally:
         server.close()
-
-
-def test_the_bright_stars_have_their_row_and_install_from_it(env, qapp, monkeypatch):
-    """The third row: the Hipparcos list and the blind solver's index, what they are for, installed or not with their
-    size, Install run by the one download job off the GUI thread (core/bright_stars.py, replaced here)."""
-    from astro_gpu.core import bright_stars as bs
-    from astro_gpu.core import skycache
-    d, page = _page(qapp)
-    shown = _gaia(_texts(page))
-    assert "Bright stars" in shown and "Find an unknown field; add the brightest stars Gaia lacks" in shown
-    assert shown.count("Not installed") == 2
-    b = _button(page, "Install bright stars (0.7 GB)")
-    assert b.isEnabled() and "Hipparcos and Tycho-2" in b.toolTip() and "25 MB" in b.toolTip()
-    main, ran_in = threading.get_ident(), []
-
-    def fake(progress=None, cancel=None):
-        ran_in.append(threading.get_ident())
-        progress(5, 14, "Tycho-2 index: building, 3 of 35")
-        for f in bs.FILES:
-            skycache.save_npz(skycache.cache_dir() / f, x=np.zeros(1000))
-        progress(14, 14, "Done")
-    monkeypatch.setattr(bs, "download", fake)
-    monkeypatch.setattr(sc, "download", lambda *a, **k: pytest.fail("the catalogue download ran"))
-    b.click()
-    _wait(qapp, lambda: not extracts.job().running() and "Done." in _texts(d.pages.currentWidget()))
-    assert ran_in and ran_in[0] != main
-    page = d.pages.currentWidget()
-    assert any(t.startswith("Installed · ") for t in _texts(page))
-    b = _button(page, "Install bright stars")
-    assert not b.isEnabled() and b.toolTip() == "Already installed."
-    (skycache.cache_dir() / bs.FILES[2]).unlink()
-    d.rebuild()
-    qapp.processEvents()
-    assert "Partly installed: 2 of 3 files" in _texts(d.pages.currentWidget())
-    d.close()
 
 
 def test_the_section_has_its_french(env, qapp):
     i18n.set_language("fr")
     d, page = _page(qapp)
     shown = _texts(page)
-    assert "Données d'étoiles hors ligne" in shown and "Catalogue d'étoiles" in shown and "Installer (1,85 Go)" in shown
-    assert _gaia(shown).count("Non installé") == 2
-    assert "Étoiles brillantes" in shown and "Installer étoiles brillantes (0,7 Go)" in shown
-    from astro_gpu.core import bright_stars as bs
-    assert d._bright_status_text(bs.Status("installed", 3, 3, 737_000_000)) == "Installé · 737 Mo"
+    assert "Données d'étoiles hors ligne" in shown and "Données d'étoiles" in shown and "Installer (2,59 Go)" in shown
+    assert _gaia(shown).count("Non installé") == 1
     _fake_catalogue(env / "nowhere" / "siril")
     sirilcat.reset()
     d.rebuild()
     qapp.processEvents()
     assert any(t.startswith("Trouvé dans le dossier de données d'un autre programme") for t in _texts(d.pages.currentWidget()))
-    assert _button(d.pages.currentWidget(), "Installer (").toolTip().startswith("Déjà installé : ")
+    assert _button(d.pages.currentWidget(), "Installer").toolTip().startswith("Déjà installé : ")
     assert not i18n.missing(), sorted(i18n.missing())
     # the download's own texts
     ge.translate, ge.number = i18n._, i18n.number
@@ -333,7 +307,7 @@ def test_the_section_has_its_french(env, qapp):
         for t in ("Checking the files", "A download is already running.", "Done",
                   "The disk is full: {why}", "The connection failed ({why}). What was downloaded is kept: start again to go on."):
             assert i18n._(t) != t
-        assert "Fichier 3 sur 49" in ge._t("File {i} of {n}", i=3, n=49)
+        assert "Fichier 3 sur 52" in ge._t("File {i} of {n}", i=3, n=52)
     finally:
         ge.translate, ge.number = (lambda s: s), (lambda x, d=1: f"{x:.{d}f}")
     d.close()

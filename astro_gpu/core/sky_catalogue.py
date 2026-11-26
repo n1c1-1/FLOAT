@@ -1,10 +1,14 @@
-"""FLOAT's own star catalogue: what Settings downloads, where it goes, whether it is installed.
+"""FLOAT's own star data: what is downloaded, where it goes, whether it is installed.
 
-Never automatic: the download runs only when the user asks for it (Settings › Catalogs & astrometry), outside any run
-(``online.guard``; a run forbids the network). The 49 files are the ones the installer fetches into ``{app}/sky``:
+The only star data FLOAT reads are these files, on this computer. The download runs from Settings › Offline star data, or
+when a run whose plan reads star data finds the installation incomplete (``needed_by``, ``missing``; the client's run
+window downloads before the run starts, never during it: ``online.guard``, a run forbids the network). The 52 files are
+the ones the installer fetches into ``{app}/sky``:
 
     siril_cat_healpix8_astro.dat                 star positions, cut to G < 16 (780 MB)
     float_xp_compact/float_xp_compact_<N>.dat    star colours, compact spectra, N = 0..47 (1.07 GB)
+    hipparcos/hip_main_v9.npz                    the Hipparcos stars V < 9, added to Gaia's (3 MB)
+    quads_hip_k8.npz, quads_tyc_k7.npz           the star indexes of the blind solver (110 MB, 620 MB)
 
 THE SINGLE SOURCE OF TRUTH is ``installer/lock/lock.json`` (part ``star_catalogue``: URL, size, SHA-256 and sub-folder of
 every file). ``pins()`` reads it at run time where it is shipped with the program (``{root}/setup/lock.json`` of an
@@ -27,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import online, sirilcat, sky_fetch
+from . import online, sirilcat, sky_fetch, skycache
 from .gaia_extracts import FILES, XP, Cancelled, DownloadError, _inside, _t, human
 
 RESOURCE = Path(__file__).resolve().parents[1] / "resources" / "sky_data.json"
@@ -66,29 +70,57 @@ def folder() -> Path:
     return sirilcat.own_dir()
 
 
+#: the stages that read star data (the blind solver is the Astrometry's own search)
+STEPS = frozenset({"astrometry", "catalogs"})
+
+
+def needed_by(plan) -> bool:
+    """Whether a plan has a step that reads star data (Astrometry, the Catalogues step of its block)."""
+    return any(j.stage.split("@")[0].split("~")[0] in STEPS for j in getattr(plan, "jobs", ()) or ())
+
+
+def _present(w: sky_fetch.Wheel) -> bool:
+    found = sirilcat.locate()
+    if w.dest == sirilcat.COMPACT_DIR:
+        if len(found["xp"]) >= FILES[XP]:
+            return True
+    elif not w.dest and w.filename.endswith("_astro.dat"):
+        return found["astro"] is not None
+    rel = f"{w.dest}/{w.filename}" if w.dest else w.filename
+    return skycache.find(rel) is not None
+
+
+def missing() -> list[sky_fetch.Wheel]:
+    """The files of the manifest this computer does not have whole: the extracts the engine finds count wherever they are
+    (``sirilcat.locate``), the others are looked for where the star data are installed (``skycache.find``)."""
+    return [w for w in pins() if not _present(w)]
+
+
+def missing_bytes() -> int:
+    return sum(w.size for w in missing())
+
+
 @dataclass
 class Status:
     state: str                  # "installed" | "partial" | "missing"
-    files: int                  # complete files the engine finds (positions + colour chunks)
-    total: int                  # files of the catalogue (49)
+    files: int                  # files of the manifest this computer has
+    total: int                  # files of the manifest (52)
     part_bytes: int = 0         # bytes of unfinished downloads in our folder
     where: Path | None = None   # folder the catalogue is read from (the first the engine finds)
     outside: Path | None = None  # that folder when it is neither our cache folder nor the installation's ``sky`` folder
 
 
 def status() -> Status:
-    """What the engine finds (``sirilcat.locate``: our files or the full extracts alike), and what a download left."""
-    found = sirilcat.locate()
-    n_xp = len(found["xp"])
-    files = (found["astro"] is not None) + n_xp
+    """What this computer has of the manifest, and what a download left."""
+    absent = missing()
+    files = len(pins()) - len(absent)
     part = 0
-    for d in (folder(), folder() / sirilcat.COMPACT_DIR):
+    for d in (folder(), folder() / sirilcat.COMPACT_DIR, folder() / "hipparcos"):
         if d.is_dir():
             for e in d.glob("*.part"):
                 with contextlib.suppress(OSError):
                     part += e.stat().st_size
-    complete = found["astro"] is not None and n_xp >= FILES[XP]
-    state = "installed" if complete else "partial" if files or part else "missing"
+    state = "installed" if not absent else "partial" if files or part else "missing"
     folders = sirilcat.installed_folders()
     where = folders[0] if folders else None
     mine = [folder()] + ([sirilcat.install_dir()] if sirilcat.install_dir() else [])
@@ -100,16 +132,16 @@ def status() -> Status:
 
 def download(progress: Callable[[int, int, str], None] | None = None, cancel: threading.Event | None = None,
              attempts: int = 3) -> None:
-    """Fetch the files not whole yet into our folder. ``progress(done, total, text)``: bytes. Raises ``Cancelled`` or
-    ``DownloadError``; always makes the engine look again for the files."""
+    """Fetch the files of the manifest this computer does not have, into our folder. ``progress(done, total, text)``:
+    bytes. Raises ``Cancelled`` or ``DownloadError``; always makes the engine look again for the files."""
     if online.offline():
         raise DownloadError(_t("The program is in offline mode: nothing is downloaded."))
-    online.guard("the star catalogue")
+    online.guard("the star data")
     if not _RUN.acquire(blocking=False):
         raise DownloadError(_t("A download is already running."))
     cancel = cancel or threading.Event()
     try:
-        items = pins()
+        items = missing()
         total = sum(w.size for w in items)
         dest = folder()
         if progress is not None:

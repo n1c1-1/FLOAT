@@ -230,9 +230,9 @@ class BlockItem(QGraphicsItem):
             p.restore()
             p.setPen(QPen(QColor("#9aa3b2"), 1.8))
             p.drawLine(QPointF(0, h / 2), QPointF(w, h / 2))
-        broken, missing = d.get("broken"), d.get("missing")
+        broken = d.get("broken")
         fallback, warned = bool(d.get("fallback")), bool(d.get("warned"))
-        if grey or missing:                              # greyed, or its sky data not on this computer: amber dashed
+        if grey:                                         # greyed: amber dashed
             p.setPen(QPen(QColor(GREY_COL), 1.4, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 7, 7)
@@ -263,7 +263,7 @@ class BlockItem(QGraphicsItem):
         p.setFont(f)
         p.setPen(QColor("#e8ebf0"))
         mark = ("failed", "error") if broken else ("off", "dim") if off else \
-            ("not_computable", "warning") if grey or missing else ("warning", "warning") if fallback else None
+            ("not_computable", "warning") if grey else ("warning", "warning") if fallback else None
         x0 = 11 + (20 if mark else 0) + self.name_w
         tw = w - 7 - x0 - (18 if d["removable"] and self.hover else 0)
         readable = QStyleOptionGraphicsItem.levelOfDetailFromTransform(p.worldTransform()) >= MIN_SCALE - 1e-6

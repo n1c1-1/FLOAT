@@ -122,7 +122,7 @@ def model_badges(m, b, kind, state) -> dict:
     n = m.block_map.node(b)
     if n is None:
         return {}
-    out = {"fallback": [], "broken": "", "missing": "", "warned": False, "earlier": []}
+    out = {"fallback": [], "broken": "", "warned": False, "earlier": []}
     paths = list(n.paths)
 
     def first(f, *args):
@@ -139,8 +139,6 @@ def model_badges(m, b, kind, state) -> dict:
         out["warned"] = bool(first(getattr(m, "image_warning", None)))   # a stretched file read as linear (#174)
     elif kind == "combine":
         out["broken"] = first(getattr(m, "fusion_problem", None))
-    if kind not in ("session", "post", "combine_layers") and not n.cut:
-        out["missing"] = first(getattr(m, "sky_missing", None), n.key)
     if state == "done" and kind not in ("session", "post", "combine_layers", "calibration") and not n.cut:
         for q in paths:
             out["fallback"] += [w for w in block_fallback(m, q, n.key) if w not in out["fallback"]]

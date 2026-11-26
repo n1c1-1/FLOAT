@@ -2333,12 +2333,10 @@ class Main(QMainWindow):
         self.sky_changed()                               # a catalogue installed there: planned again at once
 
     def sky_changed(self, *_a):
-        """The data of the sky on this computer may have changed (an extract installed, a survey fetched): the blocks
-        that could not run for lack of it, and Home's line, are said again (core/sky_data.py)."""
+        """The data of the sky on this computer may have changed (star data installed, a survey fetched): what the runs
+        can compute is planned again."""
         if self.s is not None and hasattr(self.s, "sky_changed"):
             self.s.sky_changed()
-        if self.home is not None and hasattr(self.home, "sky_changed"):
-            self.home.sky_changed()
 
     def change_language(self, code: str):
         if not self.settle_drafts():                     # the project's screen is built again: a draft is asked first

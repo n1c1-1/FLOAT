@@ -84,8 +84,8 @@ def _hooked(aa):
 
 class AstrometryParams(StageParams):
     target: str = P("", label="Target name",
-                    help="Name of the main object (e.g. 'NGC 7822', 'IC 1805', 'Heart Nebula'), resolved with SIMBAD "
-                         "to get the approximate centre of the field.",
+                    help="Name of the main object (e.g. 'NGC 7822', 'IC 1805', 'Heart Nebula'), found in the deep-sky "
+                         "catalogues on this computer to get the approximate centre of the field.",
                     tip="Not needed when RA/Dec are given or when the FITS files contain the pointing.")
     ra: float | None = P(None, label="Centre RA", unit="deg", ge=0, le=360,
                          help="Approximate right ascension of the field centre (degrees). Within ~20 % of the field "
@@ -107,8 +107,8 @@ class AstrometryParams(StageParams):
                     help="When the field centre is unknown (or the guided search fails), identify the field on the "
                          "whole sky from its brightest stars (the shapes of groups of four stars, looked up in an "
                          "index of the sky).",
-                    tip="Works for fields wider than about 1 deg; needs the Bright stars installed in Settings › Catalogs & "
-                        "astrometry (nothing is downloaded during a run).")
+                    tip="Works for fields wider than about 1 deg; needs the star data installed (Settings › Catalogs & "
+                        "astrometry; a run downloads them first when they are missing).")
     search_offsets: float = P(0.2, label="Search range", level=ADVANCED, ge=0.0, le=1.0, step=0.05,
                               unit="x field", help="How far from the given centre the solver looks for the field.")
     sip_order: int = P(3, label="Distortion order", level=ADVANCED, ge=0, le=5,
@@ -150,7 +150,6 @@ class Astrometry(Stage):
                            # followed by the header pointing as the centre: a field that failed now has a solution
                            # 5: a field not found at the scale of the entered focal length is searched again without
                            # it (Asterion first): a wrong focal length now has a solution
-    network = True
 
     def auto(self, ctx: Context) -> dict[str, Auto]:
         a: dict[str, Auto] = {}
@@ -831,8 +830,7 @@ def bright_stars(ra, dec, radius, glim, log=None, progress=None) -> tuple[dict, 
     """Gaia DR3 stars brighter than glim within radius (deg) of (ra, dec), epoch 2016.0: ({"RA_ICRS", "DE_ICRS",
     "Gmag"}, where they came from). The offline astrometric extract when it is installed (local, instant; it keeps the 127
     brightest stars of every 14' cell, which in the Milky Way can stop short of glim: plenty for a solution), else
-    the sky tiles of the cache; never the network (a run downloads nothing: core/online.py), ``skycache.SkyUnavailable``
-    when the tiles are not all there."""
+    the sky tiles of the cache; never the network, ``skycache.SkyUnavailable`` when the tiles are not all there."""
     from ..core import sirilcat, skycache
     s = sirilcat.astro_cone(ra, dec, radius, glim)
     if s is not None:
@@ -847,7 +845,7 @@ def bright_stars(ra, dec, radius, glim, log=None, progress=None) -> tuple[dict, 
 
 def gaia_bright(ra, dec, radius, glim, log=None, progress=None):
     """Gaia DR3 stars brighter than glim within radius (deg) of (ra, dec): (SkyCoord, G), brightest first. ``progress``:
-    told of each sky tile downloaded (a field's first run spends minutes there, issue #129)."""
+    told of the stars read."""
     from astropy.coordinates import SkyCoord
     key = (round(ra, 2), round(dec, 2), round(radius, 1), round(glim, 1))
     with _GAIA_LOCK:
@@ -861,8 +859,7 @@ def gaia_bright(ra, dec, radius, glim, log=None, progress=None):
         with _GAIA_LOCK:
             _GAIA_CACHE[key] = hit
         if log is not None:
-            from ..core import online
-            online.sayer(log)(f"Gaia stars for the astrometry from {src}", "info")
+            log(f"Gaia stars for the astrometry from {src}", "info")
     return hit
 
 
@@ -917,81 +914,13 @@ def find_offline(name: str) -> tuple[float, float] | None:
     return None
 
 
-def resolve_name(name: str, log=None, services: bool = False) -> tuple[float, float]:
-    """(ra, dec) of a named object: names resolved before (cache), the shipped catalogues; with ``services`` (an
-    explicit lookup outside a run, never the stage: a run downloads nothing, core/online.py), SIMBAD, NED (each
-    service given a few seconds; one line per fallback)."""
-    from ..core import online, skycache
-    say = online.sayer(log)
-    candidates = list(dict.fromkeys([name, name.replace("_", " "),
-                                     name.replace("_nebula", " Nebula").replace("_", " ")]))
-    key = _norm(name)
-    p = skycache.find("names.json")
-    known = {}
-    if p is not None:
-        try:
-            known = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            known = {}
-    if key in known:
-        return tuple(known[key][:2])
-
-    def remember(ra, dec, src):
-        try:
-            cur = skycache.cache_dir() / "names.json"
-            d = json.loads(cur.read_text(encoding="utf-8")) if cur.exists() else {}
-            d[key] = [ra, dec, src]
-            skycache.save_json(cur, d)
-        except OSError:
-            pass
-        return ra, dec
-
-    local = _local_names()
-    for c in candidates:
-        if _norm(c) in local:
-            ra, dec = local[_norm(c)]
-            say(f"'{name}' found in the deep-sky catalogues: RA {ra:.4f} Dec {dec:.4f}", "info")
-            return float(ra), float(dec)
-
-    def simbad():
-        from astroquery.simbad import Simbad
-        s = Simbad()
-        s.TIMEOUT = online.READ_S
-        for c in candidates:
-            t = s.query_object(c)
-            if t is not None and len(t):
-                import astropy.units as u
-                from astropy.coordinates import SkyCoord
-                cols = {k.lower(): k for k in t.colnames}
-                if "ra" in cols and np.issubdtype(np.asarray(t[cols["ra"]]).dtype, np.floating):
-                    return float(t[cols["ra"]][0]), float(t[cols["dec"]][0])
-                sc = SkyCoord(t[cols.get("ra", "RA")][0], t[cols.get("dec", "DEC")][0], unit=(u.hourangle, u.deg))
-                return float(sc.ra.deg), float(sc.dec.deg)
-        return None
-
-    def ned():                      # NED (NASA/IPAC) when SIMBAD (CDS) does not answer
-        from astroquery.ipac.ned import Ned
-        for c in candidates:
-            try:
-                t = Ned.query_object(c)
-            except Exception as e:  # noqa: BLE001 - an unknown name raises too: the next spelling
-                if online.network_error(e):
-                    raise
-                continue
-            if t is not None and len(t):
-                return float(t["RA"][0]), float(t["DEC"][0])
-        return None
-
-    for svc, fn in (("simbad", simbad), ("ned", ned)) if services else ():
-        try:
-            r = online.call(svc, fn, 20.0, f"the position of '{name}'")
-        except online.ServiceDown as e:
-            say(f"{online.label(svc)} {e.why}: the name '{name}' is looked up elsewhere")
-            continue
-        except Exception:  # noqa: BLE001 - this service failed on the name: the next one
-            continue
-        if r is not None:
-            return remember(r[0], r[1], svc)
-    raise StageError(f"'{name}' is not in the deep-sky catalogues and neither SIMBAD nor NED could give it: enter the "
-                     "RA/Dec of the field centre" if services else
-                     f"'{name}' is not in the deep-sky catalogues on this computer: enter the RA/Dec of the field centre")
+def resolve_name(name: str, log=None) -> tuple[float, float]:
+    """(ra, dec) of a named object, from the names resolved before (the cache) and the catalogues shipped with the
+    package; no online service is asked."""
+    pos = find_offline(name)
+    if pos is None:
+        raise StageError(f"'{name}' is not in the deep-sky catalogues on this computer: enter the RA/Dec of the field "
+                         "centre")
+    if log is not None:
+        log(f"'{name}' found in the deep-sky catalogues: RA {pos[0]:.4f} Dec {pos[1]:+.4f}", "info")
+    return pos

@@ -365,5 +365,10 @@
  "stretch undone from the header ({0} step(s); {1} pixels clipped by the stretch stay as they are)": "étirement défait d'après l'en-tête ({0} étape(s) ; {1} pixels écrêtés par l'étirement restent tels quels)",
  "stretch undone by estimate (mid-tones m = {0})": "étirement défait par estimation (tons moyens m = {0})",
  "a single image: the noise is measured on the image, the dither check is skipped (it reads two half-stacks)": "une image seule : le bruit est mesuré sur l'image, le contrôle du dither est sauté (il lit deux demi-empilements)",
- "denoising the image": "débruitage de l'image"
+ "denoising the image": "débruitage de l'image",
+ "Star data incomplete ({size} to download): Run downloads them first, then starts.": "Données d'étoiles incomplètes ({size} à télécharger) : Exécuter les télécharge d'abord, puis démarre.",
+ "Star data incomplete: downloading {pct} %": "Données d'étoiles incomplètes : téléchargement {pct} %",
+ "Star data not downloaded": "Données d'étoiles non téléchargées",
+ "Star data download cancelled. What was downloaded is kept: the next Run goes on from there.": "Téléchargement des données d'étoiles annulé. Ce qui a été téléchargé est gardé : la prochaine exécution reprend à cet endroit.",
+ "Star data not downloaded: {why}. The next Run goes on from the files kept.": "Données d'étoiles non téléchargées : {why}. La prochaine exécution reprend avec les fichiers gardés."
 }

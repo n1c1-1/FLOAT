@@ -162,8 +162,8 @@ class Plan:
     ``skipped``: workflows left out, with the reason; ``rules``: 'module:function' building the KeyRules of other
     stages than the v2 ones (tests and tools; None: the v2 stages); ``gpu_check``: 'module:function(device)' telling
     whether the process's CUDA context still works (tests; None: ``cuda_alive``); ``left_out``: {workflow: {stage:
-    why}}, the steps whose data of the sky is not on this computer (core/sky_data.py), left out of the run with the
-    steps that need their result (the others run)."""
+    why}}, the steps that cannot run (an input left to wire), left out of the run with the steps that need their
+    result (the others run)."""
 
     jobs: list[Job] = field(default_factory=list)
     targets: list[tuple[int, str]] = field(default_factory=list)
@@ -225,8 +225,8 @@ class Planner:
         self.jobs: dict[str, Job] = {}
         self.skipped: dict[int, str] = {}
         self._facts: dict[int, est.Facts] = {}
-        #: the keys that cannot run here (their data of the sky, or a result they read, is missing) and why;
-        #: {workflow: {stage: why}} of the steps that lack the data themselves (core/sky_data.py)
+        #: the keys that cannot run here (a result they read is missing, or an input is not wired) and why;
+        #: {workflow: {stage: why}} of the steps left out
         self.blocked: dict[str, str] = {}
         self.wiring: set[str] = set()         # the reasons that are an input to wire (said for every block after it)
         self.left_out: dict[int, dict[str, str]] = {}
@@ -259,39 +259,6 @@ class Planner:
             out.append(w.id)
         return out
 
-    def _centre(self, w: Workflow) -> tuple[float, float] | None:
-        """(ra, dec) of the workflow's field when known: the target's, the solved field's, a name the catalogues on
-        this computer know; asked only when the offline star extract is not installed (core/sky_data.py)."""
-        t = self.project.target
-        if t.ra is not None and t.dec is not None:
-            return float(t.ra), float(t.dec)
-        if "astrometry" in self.keys.chain(w):
-            k = self.keys.key(w, "astrometry")
-            m = (self.store.manifest("astrometry", k).get("metrics") or {}) if self.done("astrometry", k) else {}
-            if m.get("ra") is not None and m.get("dec") is not None:
-                return float(m["ra"]), float(m["dec"])
-        if t.name:
-            from ..stages.astrometry import find_offline
-            return find_offline(t.name)
-        return None
-
-    def lacks(self, w: Workflow, stage: str) -> str:
-        """Why a step of the workflow cannot run on this computer: its data of the sky is not on the disk (a run never
-        downloads it: core/online.py); "" when it can."""
-        from . import sirilcat, sky_data
-        if base(stage) not in sky_data.STEPS:
-            return ""
-        # everything installed: the field's centre is not needed, but by an Astrometry that could not find a field of
-        # unknown position (neither Asterion nor the blind solver's index here)
-        found = sirilcat.locate()
-        if found["astro"] is not None and found["xp"] and (base(stage) != "astrometry" or sky_data.blind_ready()):
-            return ""
-        why = sky_data.missing(base(stage), self._centre(w))
-        # the star spectra alone are no reason to leave the Catalogues step out: it gives the positions, and the Color
-        # block, which judges the spectra it finds, takes its fallback balance and says why (the Output and the Stars
-        # after it run as they did; they were silently dropped with Color)
-        return "" if why == sky_data.NO_SPECTRA else why
-
     # ------------------------------------------------------------------ planning
     def need(self, wf: int | Workflow, stage: str, as_input: bool = False) -> str:
         """Plan the job of a result and of what it needs; returns why it cannot run here ("" when planned or done)."""
@@ -315,15 +282,7 @@ class Planner:
             if why:                                     # a result it reads cannot be made here: neither can it
                 self.blocked[k] = why
                 self.left_out.setdefault(w.id, {})[stage] = why     # left out with what it reads, and said
-                own = self.lacks(w, stage)              # and it needs data of the sky itself: said for it too, so that
-                if own:                                 # its block is marked, not only the earlier one (#161: Color)
-                    self.left_out.setdefault(w.id, {})[stage] = own
                 return why
-        why = self.lacks(w, stage)
-        if why:                                         # its data of the sky is not here: left out, said for it
-            self.left_out.setdefault(w.id, {})[stage] = why
-            self.blocked[k] = why
-            return why
         others = {}
         why = self.keys.wiring_problem(w, stage)
         if why:                                         # an input to wire: left out with what follows (issue #165)
@@ -358,13 +317,13 @@ class Planner:
             if why:
                 self.skipped[w.id] = why
                 continue
-            if not self.need(w, stage):                 # left out (its data of the sky is not here): not asked
+            if not self.need(w, stage):                 # left out (an input to wire): not asked
                 asked.append((w.id, stage))
         jobs = order_jobs(self.jobs.values(), self.chains.order, {w for w, _ in asked})
         return Plan(jobs, asked, dict(self.skipped), left_out={w: dict(v) for w, v in self.left_out.items()})
 
 
-#: the results a stage does without when they cannot be had (the data of the sky is not on this computer, or the step
+#: the results a stage does without when they cannot be had (the step
 #: failed): Color takes its fallback balance, Gradient chooses its sky samples without the H-alpha survey; they run, and
 #: so do the Output and the Stars after them (a result that is optional in the chain, e.g. the denoising, is another
 #: matter: when it was asked and failed, what reads it is skipped)

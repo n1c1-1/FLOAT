@@ -99,7 +99,7 @@
   "5": 8,
   "6": 12
  },
- "limits": "model opened without warm-up: no facts (colour notes, session problems); sky_missing and image_problem left empty",
+ "limits": "model opened without warm-up: no facts (colour notes, session problems); image_problem left empty",
  "model_state": {
   "current": 0,
   "sel_step": "image",
@@ -129,7 +129,6 @@
    "i": 0,
    "key": "sources",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": null,
    "paths": [],
@@ -158,7 +157,6 @@
    "i": 1,
    "key": "image",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -191,7 +189,6 @@
    "i": 2,
    "key": "astrometrie",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 1,
    "paths": [
@@ -223,7 +220,6 @@
    "i": 3,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 2,
    "paths": [
@@ -252,7 +248,6 @@
    "i": 4,
    "key": "couleur",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 3,
    "paths": [
@@ -281,7 +276,6 @@
    "i": 5,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 2,
    "paths": [
@@ -312,7 +306,6 @@
    "i": 6,
    "key": "image",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -342,7 +335,6 @@
    "i": 7,
    "key": "etoiles",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 6,
    "paths": [
@@ -371,7 +363,6 @@
    "i": 8,
    "key": "image",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -402,7 +393,6 @@
    "i": 9,
    "key": "image",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -433,7 +423,6 @@
    "i": 10,
    "key": "align_on",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 9,
    "paths": [
@@ -464,7 +453,6 @@
    "i": 11,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 10,
    "paths": [
@@ -493,7 +481,6 @@
    "i": 12,
    "key": "couleur",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 11,
    "paths": [
@@ -519,7 +506,6 @@
    "i": 13,
    "key": "composition",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 7,
    "paths": [
@@ -541,7 +527,6 @@
    "i": 14,
    "key": "final",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": null,
    "paths": [

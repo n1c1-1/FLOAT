@@ -1,8 +1,10 @@
-"""FLOAT's star catalogue as Settings downloads it (core/sky_catalogue.py): the pins and their single source, the state,
-the download (resume, checksum, nothing fetched twice, byte counts past 4 GB) from a local fake server.
+"""FLOAT's star data as Settings and the run window download them (core/sky_catalogue.py): the pins and their single source,
+the state, what is missing, the download (only what is missing, resume, checksum, nothing fetched twice, byte counts past
+4 GB) from a local fake server.
 
 No network but 127.0.0.1: a small HTTP server in a thread answers with Range; the pins of the fake catalogue (a few KB per
-file, the real layout: positions at the top, 48 compact chunks in ``float_xp_compact/``) are generated here.
+file, the real layout: positions at the top, 48 compact chunks in ``float_xp_compact/``, the Hipparcos list in
+``hipparcos/`` and the two blind solver indexes at the top) are generated here.
 """
 from __future__ import annotations
 
@@ -76,10 +78,13 @@ def _compact_file(chunk: int, n: int = 3) -> bytes:
 
 
 def _bodies() -> dict[str, tuple[str, bytes]]:
-    """name -> (sub-folder, bytes), the 49 files."""
+    """name -> (sub-folder, bytes), the 52 files."""
     out = {ASTRO_NAME: ("", _astro_file())}
     for n in range(48):
         out[f"float_xp_compact_{n}.dat"] = ("float_xp_compact", _compact_file(n))
+    out["hip_main_v9.npz"] = ("hipparcos", b"hip" * 50)
+    out["quads_hip_k8.npz"] = ("", b"quads hip" * 40)
+    out["quads_tyc_k7.npz"] = ("", b"quads tyc" * 40)
     return out
 
 
@@ -147,9 +152,13 @@ def test_the_pins_of_the_package_agree_with_the_lock_of_the_installer():
     lock = json.loads((ROOT / "installer" / "lock" / "lock.json").read_text(encoding="utf-8"))["star_catalogue"]
     copy = json.loads(sky_catalogue.RESOURCE.read_text(encoding="utf-8"))
     assert copy == lock
-    assert len(lock["files"]) == 49 and lock["files"][0]["filename"] == ASTRO_NAME and lock["files"][0]["dest"] == ""
-    assert {f["dest"] for f in lock["files"][1:]} == {sirilcat.COMPACT_DIR}
-    assert sum(f["size"] for f in lock["files"]) == pytest.approx(1.85e9, rel=0.01)
+    assert len(lock["files"]) == 52 and lock["files"][0]["filename"] == ASTRO_NAME and lock["files"][0]["dest"] == ""
+    assert {f["dest"] for f in lock["files"][1:49]} == {sirilcat.COMPACT_DIR}
+    # the Hipparcos list, and the blind solver's two indexes: where skycache.find, blindsolve and the Catalogues step read
+    assert [(f["filename"], f["dest"], f["size"]) for f in lock["files"][49:]] == [
+        ("hip_main_v9.npz", "hipparcos", 2801706), ("quads_hip_k8.npz", "", 111355268),
+        ("quads_tyc_k7.npz", "", 622921108)]
+    assert sum(f["size"] for f in lock["files"]) == pytest.approx(2.59e9, rel=0.01)
 
 
 def test_the_lock_beside_the_program_wins_and_the_copy_serves_without_it(tmp_path, monkeypatch):
@@ -161,7 +170,7 @@ def test_the_lock_beside_the_program_wins_and_the_copy_serves_without_it(tmp_pat
     monkeypatch.setattr(sky_catalogue, "lock_file", lambda: lock)
     assert [w.filename for w in sky_catalogue.pins()] == ["other.dat"]
     lock.write_text("{ broken", encoding="utf-8")                       # an unreadable lock: the copy again
-    assert len(sky_catalogue.pins()) == 49
+    assert len(sky_catalogue.pins()) == 52
 
 
 def test_the_installer_and_settings_share_one_downloader():
@@ -179,19 +188,19 @@ def test_the_installer_and_settings_share_one_downloader():
 
 def test_the_states_missing_partial_installed(tmp_path, server):
     st = sky_catalogue.status()
-    assert (st.state, st.files, st.total, st.where) == ("missing", 0, 49, None)
+    assert (st.state, st.files, st.total, st.where) == ("missing", 0, 52, None)
     own = sirilcat.own_dir()
     (own / sirilcat.COMPACT_DIR).mkdir(parents=True)
     (own / sirilcat.COMPACT_DIR / "float_xp_compact_3.dat").write_bytes(_bodies()["float_xp_compact_3.dat"][1])
     sirilcat.reset()
     st = sky_catalogue.status()
-    assert (st.state, st.files, st.total) == ("partial", 1, 49)
+    assert (st.state, st.files, st.total) == ("partial", 1, 52)
     (own / sirilcat.COMPACT_DIR / "float_xp_compact_4.dat.part").write_bytes(b"x" * 1000)    # a stopped download
     sirilcat.reset()
     assert sky_catalogue.status().part_bytes == 1000
     sky_catalogue.download()
     st = sky_catalogue.status()
-    assert (st.state, st.files, st.where, st.outside) == ("installed", 49, own, None)
+    assert (st.state, st.files, st.where, st.outside) == ("installed", 52, own, None)
 
 
 def test_a_catalogue_found_elsewhere_is_installed_and_told_so(tmp_path, server):
@@ -245,10 +254,47 @@ def test_a_download_lands_where_the_reader_finds_it_and_a_second_one_fetches_not
     total = sum(len(b) for _s, b in server.bodies.values())
     assert seen[0][2] == "Checking the files" and seen[-1] == (total, total, "Done")
     assert all(isinstance(d, int) and d <= t for d, t, _s in seen)
-    assert any(s.startswith("File 2 of 49: downloading") for _d, _t, s in seen)
-    assert len(server.requests) == 49
+    assert any(s.startswith("File 2 of 52: downloading") for _d, _t, s in seen)
+    assert len(server.requests) == 52
     sky_catalogue.download()
-    assert len(server.requests) == 49                                      # nothing fetched again
+    assert len(server.requests) == 52                                      # nothing fetched again
+
+
+def test_the_download_fetches_only_the_files_missing_and_the_run_asks_for_them(server):
+    """One button installs every missing file of the manifest; a plan that reads star data (Astrometry, the Catalogues step)
+    is what makes a run ask for them."""
+    from types import SimpleNamespace
+    assert len(sky_catalogue.missing()) == 52 and sky_catalogue.missing_bytes() == sum(len(b) for _s, b in server.bodies.values())
+    sky_catalogue.download()
+    assert sky_catalogue.missing() == [] and len(server.requests) == 52
+    own = sirilcat.own_dir()
+    assert (own / "hipparcos" / "hip_main_v9.npz").is_file() and (own / "quads_tyc_k7.npz").is_file()
+    (own / "quads_hip_k8.npz").unlink()                                    # one file lost: that one only
+    assert [w.filename for w in sky_catalogue.missing()] == ["quads_hip_k8.npz"]
+    sky_catalogue.download()
+    assert _files_fetched(server)[52:] == ["quads_hip_k8.npz"] and sky_catalogue.missing() == []
+    job = lambda stage: SimpleNamespace(stage=stage)  # noqa: E731
+    assert sky_catalogue.needed_by(SimpleNamespace(jobs=[job("stack"), job("astrometry")]))
+    assert sky_catalogue.needed_by(SimpleNamespace(jobs=[job("catalogs@2")]))
+    assert not sky_catalogue.needed_by(SimpleNamespace(jobs=[job("stack"), job("color")]))
+    assert not sky_catalogue.needed_by(SimpleNamespace(jobs=[]))
+
+
+def test_the_extracts_found_elsewhere_count_but_the_bright_stars_are_still_asked_for(tmp_path, server, monkeypatch):
+    """The full extracts of another program's folder are read as they are (not downloaded again); the three files that
+    only FLOAT has (the Hipparcos list, the blind solver's indexes) are what is missing."""
+    elsewhere = tmp_path / "elsewhere"
+    for name, (sub, b) in _bodies().items():
+        if sub != "hipparcos" and name.endswith(".dat"):
+            (elsewhere / sub).mkdir(parents=True, exist_ok=True)
+            (elsewhere / sub / name).write_bytes(b)
+    monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", str(elsewhere))
+    sirilcat.reset()
+    assert [w.filename for w in sky_catalogue.missing()] == ["hip_main_v9.npz", "quads_hip_k8.npz", "quads_tyc_k7.npz"]
+    assert sky_catalogue.status().state == "partial" and sky_catalogue.status().files == 49
+    sky_catalogue.download()
+    assert _files_fetched(server) == ["hip_main_v9.npz", "quads_hip_k8.npz", "quads_tyc_k7.npz"]
+    assert sky_catalogue.status().state == "installed"
 
 
 def test_an_interrupted_file_resumes_from_its_part(server):
@@ -284,7 +330,7 @@ def test_cancel_keeps_what_was_fetched_and_the_next_run_goes_on(server):
     cancel = threading.Event()
 
     def stop_in_the_third_file(done, total, text):
-        if text.startswith("File 3 of 49"):
+        if text.startswith("File 3 of 52"):
             cancel.set()
     with pytest.raises(ge.Cancelled):
         sky_catalogue.download(stop_in_the_third_file, cancel)
@@ -300,7 +346,7 @@ def test_byte_counts_past_four_gigabytes_pass_as_python_ints(server, monkeypatch
 
     def fake(items, folder, on_progress, cancel, context, attempts=3, pause=2.0):
         w = items[0]
-        on_progress(sky_fetch.Progress(w, 1, 49, big // 2, big, 6 * 2**30, 1.0))
+        on_progress(sky_fetch.Progress(w, 1, 52, big // 2, big, 6 * 2**30, 1.0))
     monkeypatch.setattr(sky_fetch, "download_all", fake)
     seen = []
     sky_catalogue.download(lambda d, t, s: seen.append((d, t)))

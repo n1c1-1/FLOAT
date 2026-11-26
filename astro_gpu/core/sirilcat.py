@@ -280,6 +280,12 @@ def _candidates() -> list[Path]:
             + _data_dirs())
 
 
+def data_folders() -> list[Path]:
+    """The folders the star data are looked for in, in order: the ones the extracts are (``_candidates``), that hold
+    FLOAT's other star files (the Hipparcos list, the blind solver's indexes) beside them."""
+    return list(dict.fromkeys(d for d in _candidates() if d.is_dir()))
+
+
 def installed_folders() -> list[Path]:
     """The folders that hold extracts the engine finds now (``locate``)."""
     f = locate()

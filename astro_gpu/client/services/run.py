@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from ... import api
 from ...core.project2 import Project2
@@ -1239,6 +1239,10 @@ class RunController(QObject):
         self._clock.timeout.connect(self._tick)
         self.plan_error = ""                 # why the plan of the window could not be made ('' when it was)
         self._stop_asked = False             # Stop pressed while the run was starting
+        self.installing = False              # the star data the plan reads are being downloaded before it starts
+        self.install_state: tuple = (0, 1, "")      # (bytes done, bytes total, text) of that download
+        self.install_error = ""              # why the last one did not finish ('' when it did, or none ran)
+        self._install_plan = None            # the plan that starts when the download is done
         self.scope: set | None = None        # the workflows of Run to here (what may refuse it); None: Run all
         self._follow_timer = QTimer(self)    # the plan window follows the graph (coalesced)
         self._follow_timer.setSingleShot(True)
@@ -1566,8 +1570,53 @@ class RunController(QObject):
         """The Run button of the plan dialog: start the run (in the worker: nothing blocks the window)."""
         if self.running or not plan or self._snapshot is None:
             return False
+        if self.installing:
+            return False
         if self.refusal(plan):                               # a fusion or data that cannot run (1.1): never started
             return False
+        from ...core import sky_catalogue
+        if sky_catalogue.needed_by(plan) and sky_catalogue.missing():
+            return self._install_first(plan)                 # the star data are incomplete: downloaded, then it starts
+        return self._launch(plan)
+
+    def _install_first(self, plan) -> bool:
+        """The plan reads star data and the installation is incomplete: download what is missing (the same download as
+        Settings' Install, resumable), then start the run by itself. A download that fails (no network...) says why and
+        the run does not start: the next Run goes on from the files kept."""
+        from ...core import sky_catalogue
+        from . import extracts
+        job = extracts.job()
+        if not getattr(self, "_install_wired", False):
+            job.progress.connect(self._install_progress, Qt.QueuedConnection)
+            job.finished.connect(self._install_finished, Qt.QueuedConnection)
+            self._install_wired = True
+        self.plan = plan
+        self.installing, self.install_error, self._install_plan = True, "", plan
+        self.install_state = job.last if job.running() else (0, 1, _("Checking the files"))
+        if not job.running():
+            job.start(sky_catalogue.KIND)
+        self.updated.emit()
+        return True
+
+    def _install_progress(self, done, total, text):
+        if self.installing:
+            self.install_state = (done, total, text)
+            self.updated.emit()
+
+    def _install_finished(self, _kind, outcome):
+        if not self.installing:
+            return
+        plan, self._install_plan, self.installing = self._install_plan, None, False
+        if outcome:
+            self.install_error = (_("Star data download cancelled. What was downloaded is kept: the next Run goes on from "
+                                    "there.") if outcome == "cancelled" else
+                                  _("Star data not downloaded: {why}. The next Run goes on from the files kept.").format(
+                                      why=outcome.rstrip(".")))
+        elif plan is not None:
+            self._launch(plan)
+        self.updated.emit()
+
+    def _launch(self, plan) -> bool:
         self.plan = plan
         self.track = RunTrack.of_plan(plan)
         self.track.plan = plan
@@ -1739,6 +1788,10 @@ class RunController(QObject):
     def stop(self):
         """Stop the run at the next check of the stage in progress: what is computed is kept, and the next run
         goes on from the stage's last checkpoint."""
+        if self.installing:                                # the download of the star data: cancelled, the run not started
+            from . import extracts
+            extracts.job().cancel()
+            return
         if self.phase == "starting":                       # round 2: asked while starting, done once it has started
             self._stop_asked = True
         elif self.phase != "running":

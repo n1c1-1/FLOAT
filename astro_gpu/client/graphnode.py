@@ -515,8 +515,6 @@ class Node:
     cut: bool = False                          # cut by the user in its workflows (issue #43)
     grey: str = ""                             # why it cannot run (a cut before it), translated; "" when it can
     broken: str = ""                           # why it cannot run at all (a fusion's channel gone...): circled in red
-    missing: str = ""                          # why it cannot run on this computer: the data of the sky it needs is
-    #                                            not on the disk (core/sky_data.py); left out of the runs, the rest runs
     slot: int = -1                             # an image block: its rank among its workflow's image blocks (#47); a
     #                                            combination: its rank among the combinations it reads (#165)
     h: float = 0.0                             # its height when it is not the standard one (a join with many inputs)
@@ -702,8 +700,6 @@ class BlockMap:
                     first(getattr(m, "fusion_waiting", None))
             elif n.key == "align_on":
                 n.waits = first(getattr(m, "wiring_reason", None), "align_on")
-            if n.key not in ("session", "final", "sources", "composition") and not n.cut and not n.grey:
-                n.missing = first(getattr(m, "sky_missing", None), n.key)
         except Exception:  # noqa: BLE001 - the same
             pass
         return n

@@ -93,21 +93,13 @@ def test_the_stop_is_looked_at_between_the_similarities_of_a_sparse_field(monkey
 
 def test_the_blind_solver_looks_at_the_stop_between_its_candidates():
     """Its candidates are verified one by one, thousands on a wide index: ``check`` before each."""
-    from itertools import combinations
-
     from astropy.coordinates import SkyCoord
-    from scipy.spatial import cKDTree
 
     from astro_gpu.core import blindsolve as bs
     rng = np.random.default_rng(2)
     ra, dec = rng.uniform(60, 70, 3000), rng.uniform(5, 15, 3000)
-    index = object.__new__(bs.SkyIndex)       # a small index of its own: the cache of the computer is never read
-    index.k = 6
-    index.combos = np.array(list(combinations(range(index.k), 3)))
-    index.ra, index.dec = ra, dec
-    index.codes, index.quads = index._build()
-    index.xyz = bs._unit(ra, dec)
-    index.star_tree, index.code_tree = cKDTree(index.xyz), cKDTree(index.codes)
+    codes, quads = bs.build_index(ra, dec, 6)
+    index = bs.SkyIndex("hip", k=6, arrays={"ra": ra, "dec": dec, "codes": codes, "quads": quads})   # its own: no file read
     w = am._tan(65.0, 10.0, 20.0, W, H)
     px, py = w.world_to_pixel(SkyCoord(ra, dec, unit="deg"))
     ins = (px > 0) & (px < W) & (py > 0) & (py < H)

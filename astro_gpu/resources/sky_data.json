@@ -441,6 +441,33 @@
    "sha256": "6a7901a753b2d731259f2cc10679f702bfb3a11627df2c673bdaa6a1170e17b5",
    "size": 14830452,
    "dest": "float_xp_compact"
+  },
+  {
+   "name": "star_catalogue",
+   "version": "sky-data-v1",
+   "filename": "hip_main_v9.npz",
+   "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/hip_main_v9.npz",
+   "sha256": "dfe21dcbc3bad92f90218b92ff7917352b8188db9a49c30ac7497e7824ff3405",
+   "size": 2801706,
+   "dest": "hipparcos"
+  },
+  {
+   "name": "star_catalogue",
+   "version": "sky-data-v1",
+   "filename": "quads_hip_k8.npz",
+   "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/quads_hip_k8.npz",
+   "sha256": "8fac965041d01c8980e14f932645da5176fe9496b6e352e805db9ac8a13ca436",
+   "size": 111355268,
+   "dest": ""
+  },
+  {
+   "name": "star_catalogue",
+   "version": "sky-data-v1",
+   "filename": "quads_tyc_k7.npz",
+   "url": "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/quads_tyc_k7.npz",
+   "sha256": "c7144614bc1213263df757f797fd1ecb932b7c27957118d4de03c1abff7b72c0",
+   "size": 622921108,
+   "dest": ""
   }
  ]
 }

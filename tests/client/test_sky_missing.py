@@ -1,6 +1,6 @@
-"""A block whose data of the sky is not on this computer (the offline star catalogue not installed: core/sky_data.py)
-is marked on the graph with the reason on hover, says it in its panel, and the run window lists it before the run;
-the other blocks and workflows still run. Nothing is downloaded during a run (tests/test_no_download_in_run.py)."""
+"""Star data not on this computer: no block is marked or left out; the run window says the installation is incomplete
+and, at Run, downloads what is missing and starts by itself (a failure says why and the run does not start). Nothing is
+downloaded during a run (tests/test_no_download_in_run.py)."""
 from __future__ import annotations
 
 import os
@@ -11,13 +11,11 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton  # noqa: E402
 
 from astro_gpu.client import i18n  # noqa: E402
-from astro_gpu.core import sirilcat, sky_data  # noqa: E402
+from astro_gpu.core import sirilcat  # noqa: E402
 from tests.client.pagehelp import done, item, marked, node, open_page, qapp, settle  # noqa: E402, F401
-
-NO_STARS = "the star catalogue is not installed on this computer"
 
 
 @pytest.fixture
@@ -30,131 +28,150 @@ def no_catalogue(tmp_path, monkeypatch):
     monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", "")
     monkeypatch.setenv("ASTRO_GPU_SIRIL_CATALOGUES", "")
     sirilcat.reset()
-    sky_data.reset()
     yield
     i18n.set_language("en")
     sirilcat.reset()
-    sky_data.reset()
+
+
+def _button(root, text):
+    return next(b for b in root.findChildren(QPushButton) if b.text() == text and b.isVisibleTo(root))
 
 
 def _texts(root) -> list[str]:
     return [w.text() for w in root.findChildren(QLabel) if w.isVisibleTo(root) and w.text()]
 
 
-def test_the_block_without_its_catalogue_is_marked_and_says_why(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
+def test_blocks_without_star_data_are_not_marked_and_the_plan_runs_them(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
+    """No star data on this computer: nothing is greyed or marked, no block is left out of the plan; the run installs them
+    (tests below)."""
     w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
     try:
         settle(w, page)
-        q = m.paths[0]
-        ast = node(m, q, "astrometrie")
-        assert ast.missing == NO_STARS
-        col = node(m, q, "couleur")
-        assert all(not n.missing for n in marked(m) if n.key not in ("astrometrie", "couleur"))   # Stacking, Gradient...
-        # #161: the Color block needs the spectra too; it is left out with Astrometry and says it, not only the earlier one
-        assert col.missing == NO_STARS
-        assert m.sky_missing(q, "couleur") == NO_STARS
+        assert all(not hasattr(n, "missing") for n in marked(m))
+        assert not hasattr(m, "sky_missing")
         tip = item(page, key="astrometrie").toolTip()
-        assert f"Cannot run: {NO_STARS}. Install it: Settings › Catalogs & astrometry" in tip
-        page.select(step="astrometrie")
-        settle(w, page)
-        assert f"Cannot run: {NO_STARS}" in _texts(page.panel)
-        # the run window says it before the run, and the plan runs the rest
+        assert "Cannot run" not in tip and "Install it" not in tip
         plan = m.plan_all()
-        assert plan.left_out == {q.pid: {"astrometry": NO_STARS, "catalogs": NO_STARS, "surveys": NO_STARS}}
-        assert {"inventory", "stack"} <= {j.stage for j in plan.jobs}
-        from astro_gpu.client.runs import RunDialog
-        d = RunDialog(m, plan, "Run")
-        assert f'"{q.name}": Astrometry and the blocks after it not run: {NO_STARS}. Install it: Settings › Catalogs ' \
-               "& astrometry" in d.warnings()
-        d.close()
-        i18n.set_language("fr")
-        assert m.sky_missing(q, "astrometrie") == "le catalogue d'étoiles n'est pas installé sur cet ordinateur"
-        i18n.set_language("en")
-        # installed meanwhile (Settings): the block can run, at once
-        from tests import skyfield
-        sky = skyfield.field(tmp_path / "sky", spectra=True)
-        monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", str(sky["extracts"]))
-        sirilcat.reset()
-        m.sky_changed()
-        QApplication.processEvents()
-        assert node(m, q, "astrometrie").missing == "" and m.plan_all().left_out == {}
-    finally:
-        done(w, m, page)
-
-
-def test_the_positions_without_the_spectra_leave_the_color_block_to_its_fallback(qapp, tmp_path, monkeypatch,
-                                                                                no_catalogue):  # noqa: F811
-    """The star positions installed alone (the spectra are the 10 GB part): Astrometry runs, and so does the Color block,
-    which takes its fallback balance and says why when it runs: it is not marked as unable to run."""
-    from tests import skyfield
-    sky = skyfield.field(tmp_path / "sky", spectra=False)
-    monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", str(sky["extracts"]))
-    sirilcat.reset()
-    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
-    try:
-        settle(w, page)
-        q = m.paths[0]
-        assert node(m, q, "couleur").missing == ""
-        assert node(m, q, "astrometrie").missing == ""
-        assert m.plan_all().left_out == {}
-    finally:
-        done(w, m, page)
-
-
-def _button(root, text):
-    from PySide6.QtWidgets import QPushButton
-    return next(b for b in root.findChildren(QPushButton) if b.text() == text and b.isVisibleTo(root))
-
-
-def test_the_blocked_block_opens_the_catalogue_s_settings_page(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
-    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
-    try:
-        settle(w, page)
+        assert plan.left_out == {}
+        assert {"astrometry", "catalogs"} <= {j.stage for j in plan.jobs}
         page.select(step="astrometrie")
         settle(w, page)
-        b = _button(page.panel, "Install catalogue")
-        assert "Settings › Catalogs & astrometry" in b.toolTip()
-        asked = []
-        page.open_settings = lambda pg=None: asked.append(pg)      # the main window's (never a dialog in a test)
-        b.click()
-        assert asked == ["catalogs"]
-        page.select(step="empilement")                              # a block that needs no catalogue: no button
-        settle(w, page)
-        assert not [x for x in page.panel.findChildren(type(b)) if x.text() == "Install catalogue" and
-                    x.isVisibleTo(page.panel)]
+        assert not [t for t in _texts(page.panel) if "Cannot run" in t]
+        assert not [b for b in page.panel.findChildren(QPushButton) if b.text() == "Install catalogue"]
     finally:
         done(w, m, page)
 
 
-def test_home_says_once_when_the_star_catalogue_is_not_installed(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
-    from astro_gpu.client import prefs
-    from astro_gpu.client.home import HomeView
-    from astro_gpu.client.services.worker import ApiWorker
-    monkeypatch.setenv("ASTRO_GPU_SETTINGS", str(tmp_path / "settings.json"))
-    prefs.load()
-    worker = ApiWorker()
-    home = HomeView(worker)
+def test_the_run_window_says_the_star_data_are_incomplete_and_their_size(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
+    from astro_gpu.client.runs import INFO_NOTE, RunDialog
+    from astro_gpu.core import sky_catalogue as sc
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
     try:
-        home.resize(1200, 700)
-        assert home.sky_box.isVisibleTo(home)
-        assert home.sky_text.text() == "Star catalogue not installed: Astrometry and Color need it"
-        # at the top of the left column, above its buttons, not at the foot where it was missed
-        home.show()
-        new = _button(home, "New project")
-        assert home.sky_box.mapTo(home, home.sky_box.rect().topLeft()).y() < new.mapTo(home, new.rect().topLeft()).y()
-        asked = []
-        home.open_settings = lambda pg=None: asked.append(pg)
-        _button(home, "Install catalogue").click()
-        assert asked == ["catalogs"]
-        from tests import skyfield
-        sky = skyfield.field(tmp_path / "sky", spectra=False)
-        monkeypatch.setenv("ASTRO_GPU_GAIA_EXTRACTS", str(sky["extracts"]))
-        sirilcat.reset()
-        home.sky_changed()
-        assert not home.sky_box.isVisibleTo(home)
+        settle(w, page)
+        assert sc.missing_bytes() == sc.total_bytes() > 2e9             # nothing on this computer: the whole manifest
+        d = RunDialog(m, m.plan_all(), "Run")
+        note = [t for t in d.warnings() if "Star data incomplete" in t]
+        assert len(note) == 1 and note[0].startswith(INFO_NOTE) and "GB to download" in note[0], note
+        assert not [r for r in d.refused() if "star" in r[1].lower()]   # said, not blocked
+        i18n.set_language("fr")
+        assert [t for t in d.warnings() if "Données d'étoiles incomplètes" in t]
+        i18n.set_language("en")
+        monkeypatch.setattr(sc, "missing", lambda: [])                  # everything installed: nothing said
+        assert not [t for t in d.warnings() if "Star data" in t]
+        d.close()
     finally:
-        home.close()
-        worker.stop()
+        done(w, m, page)
+
+
+def _controller(m, monkeypatch):
+    """A RunController that records the starts instead of launching a worker."""
+    from astro_gpu.client.services.run import RunController
+    c = RunController(m)
+    c._snapshot = object()
+    monkeypatch.setattr(RunController, "refusal", lambda self, pl: [])      # the scratch project has one light frame
+    started = []
+    monkeypatch.setattr(RunController, "_launch", lambda self, pl: started.append(pl) or True)
+    return c, started
+
+
+def _wait(cond, seconds=10):
+    import time
+    t0 = time.monotonic()
+    while not cond() and time.monotonic() - t0 < seconds:
+        QApplication.processEvents()
+        time.sleep(0.01)
+    QApplication.processEvents()
+
+
+def test_run_downloads_the_missing_star_data_then_starts_by_itself(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
+    from astro_gpu.core import sky_catalogue as sc
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
+    try:
+        settle(w, page)
+        plan = m.plan_all()
+        c, started = _controller(m, monkeypatch)
+        have = []
+        monkeypatch.setattr(sc, "missing", lambda: [] if have else sc.pins()[:1])
+
+        def fake(progress=None, cancel=None, attempts=3):
+            progress(0, 100, "File 1 of 1: downloading 0 B of 100 B")
+            progress(100, 100, "Done")
+            have.append(1)
+        monkeypatch.setattr(sc, "download", fake)
+        assert c.begin(plan) and c.installing and not started          # downloading: the run has not started
+        _wait(lambda: started)
+        assert started == [plan] and not c.installing and c.install_error == ""
+        assert c.install_state[:2] == (100, 100)
+    finally:
+        done(w, m, page)
+
+
+def test_run_that_cannot_download_says_why_does_not_start_and_the_next_one_resumes(qapp, tmp_path, monkeypatch,  # noqa: F811
+                                                                                   no_catalogue):
+    from astro_gpu.client.runs import RunDialog
+    from astro_gpu.core import sky_catalogue as sc
+    from astro_gpu.core.gaia_extracts import DownloadError
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
+    try:
+        settle(w, page)
+        plan = m.plan_all()
+        c, started = _controller(m, monkeypatch)
+        d = RunDialog(m, plan, "Run", controller=c)
+        have, tries = [], []
+        monkeypatch.setattr(sc, "missing", lambda: [] if have else sc.pins()[:1])
+
+        def fake(progress=None, cancel=None, attempts=3):
+            tries.append(1)
+            if len(tries) == 1:
+                raise DownloadError("The connection failed (no network). What was downloaded is kept: start again to go on.")
+            have.append(1)
+        monkeypatch.setattr(sc, "download", fake)
+        assert c.begin(plan)
+        _wait(lambda: not c.installing)
+        assert not started and "no network" in c.install_error and "next Run goes on" in c.install_error
+        d.refresh()
+        assert d.summary.text() == "Star data not downloaded" and "no network" in d.detail.text()
+        assert c.begin(plan)
+        _wait(lambda: started)
+        assert started == [plan] and c.install_error == "" and len(tries) == 2
+        d.close()
+    finally:
+        done(w, m, page)
+
+
+def test_a_plan_that_reads_no_star_data_starts_at_once(qapp, tmp_path, monkeypatch, no_catalogue):  # noqa: F811
+    from astro_gpu.core import runner2
+    from astro_gpu.core import sky_catalogue as sc
+    w, m, page = open_page(tmp_path, monkeypatch, workflows=("Full",))
+    try:
+        settle(w, page)
+        plan = m.plan_all()
+        plan = runner2.Plan([j for j in plan.jobs if j.stage.split("@")[0] not in sc.STEPS])
+        assert not sc.needed_by(plan)
+        c, started = _controller(m, monkeypatch)
+        assert c.begin(plan) and started == [plan] and not c.installing
+    finally:
+        done(w, m, page)
 
 
 def test_get_survey_fetches_it_outside_the_run_and_the_next_run_uses_it(qapp, tmp_path, monkeypatch,  # noqa: F811
@@ -274,7 +291,7 @@ def test_the_run_window_says_when_asterion_is_not_installed(qapp, tmp_path, monk
         done(w, m, page)
 
 
-def test_a_block_left_out_for_its_wiring_is_named_and_translated_without_the_install_tail(qapp, tmp_path, monkeypatch):  # noqa: F811
+def test_a_block_left_out_for_its_wiring_is_named_and_translated(qapp, tmp_path, monkeypatch):  # noqa: F811
     """A combination left out because its inputs are not on one grid: its block by its displayed name, not its engine
     stage, the reason translated with the names of its ports, and no "Install it" sentence (that one is for the sky's
     data only)."""

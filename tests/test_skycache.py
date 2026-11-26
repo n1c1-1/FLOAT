@@ -1,17 +1,15 @@
-"""The sky catalogue cache (core/skycache.py), the online services' time limits (core/online.py) and the offline
-Gaia extracts (core/sirilcat.py; their download: test_gaia_extracts.py). No network: the services are replaced by a
-synthetic sky or by a local server that never answers."""
+"""The sky catalogue cache (core/skycache.py: the tiles earlier versions downloaded, read as they are), the time limits of
+the one online service left (core/online.py) and the offline Gaia extracts (core/sirilcat.py; their download:
+test_gaia_extracts.py). No network: a synthetic sky written as tiles on the disk."""
 from __future__ import annotations
 
-import socket
-import threading
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from astro_gpu.core import gaia_archive, online, sirilcat, skycache
+from astro_gpu.core import online, sirilcat, skycache
 
 
 @pytest.fixture(autouse=True)
@@ -50,24 +48,18 @@ def _sky(n=60000, ra0=150.0, dec0=30.0, half=6.0, seed=1):
             "XPsamp": (g < 17.65).astype(float)}
 
 
-class FakeGaia:
-    """gaia_cone over the synthetic sky; counts the calls."""
-
-    def __init__(self, sky):
-        self.sky, self.calls = sky, 0
-        self.lock = threading.Lock()
-
-    def __call__(self, ra, dec, radius, cols, gfilter, say=None, polygon=None):
-        if online.offline():
-            raise online.ServiceDown("vizier", "is not asked (offline mode)")
-        with self.lock:
-            self.calls += 1
-        lo, hi = skycache.parse_filter(gfilter)
-        s = self.sky
-        m = (skycache._sep(ra, dec, s["RA_ICRS"], s["DE_ICRS"]) <= radius) & (s["Gmag"] < hi)
-        if lo is not None:
-            m &= s["Gmag"] >= lo
-        return {k: s[k][m] for k in cols}
+def _write_layer(sky, lo, hi, level, cols, around=(150.0, 30.0, 8.0)):
+    """The tiles of a layer, as the versions that downloaded them left them (empty tiles written too)."""
+    lay = skycache.Layer(cols, lo, hi, level)
+    skycache.save_json(lay.dir / "layer.json", {"cols": lay.cols, "lo": lo, "hi": hi, "level": level, "epoch": 2016.0})
+    tile = skycache.tile_of(level, sky["RA_ICRS"], sky["DE_ICRS"])
+    keep = sky["Gmag"] < hi
+    if lo is not None:
+        keep &= sky["Gmag"] >= lo
+    for tl in skycache.tiles_in_cone(level, *around):
+        m = keep & (tile == tl)
+        skycache.save_npz(lay.path(tl), **{k: sky[k][m] for k in lay.cols})
+    return lay
 
 
 def _brute(sky, cones, cols, lo, hi):
@@ -122,380 +114,61 @@ def test_tiles_in_cone_finds_every_tile_the_cone_touches():
             assert len(got) <= len(need) + 12             # and not much more
 
 
-def _in_polygon(ra, dec, poly, ra0, dec0):
-    """Whether each position lies in the spherical polygon (great-circle edges): in the gnomonic projection around
-    (ra0, dec0) great circles are straight lines, so a plane polygon test is exact there."""
-    from matplotlib.path import Path as MPath
-    c = skycache._xyz(ra0, dec0)
-    e = np.cross([0.0, 0.0, 1.0], c)
-    e /= np.linalg.norm(e)
-    n = np.cross(c, e)
-
-    def plane(r, d):
-        p = skycache._xyz(r, d).reshape(-1, 3)
-        return np.c_[p @ e, p @ n] / (p @ c)[:, None]
-    pr, pd = np.array(poly).T
-    return MPath(plane(pr, pd), closed=False).contains_points(plane(ra, dec))
-
-
-def _pushed(ra0, dec0, ra, dec, margin):
-    """The positions moved ``margin`` deg away from (ra0, dec0) along the sky."""
-    import astropy.units as u
-    from astropy.coordinates import SkyCoord
-    c0, p = SkyCoord(ra0 * u.deg, dec0 * u.deg), SkyCoord(ra * u.deg, dec * u.deg)
-    q = c0.directional_offset_by(c0.position_angle(p), c0.separation(p) + margin * u.deg)
-    return q.ra.deg, q.dec.deg
-
-
-def test_the_polygon_of_a_tile_holds_all_of_it_with_room_inside_its_cone():
-    """Issue #129: GAVO is asked a polygon around each sky tile rather than the cone around it (half the area). Every
-    point of the tile must be in it, its edge included and with room (half its 1' margin), and the polygon inside the
-    cone, whose stars it replaces: at both levels, across RA 0 and near the poles."""
-    import astropy.units as u
-    rng = np.random.default_rng(11)
-    places = [(0.05, 10.0), (359.9, -20.0), (97.98, 4.95), (10.0, 80.0), (200.0, -84.0)]
-    places += [(rng.uniform(0, 360), rng.uniform(-85, 85)) for _ in range(30)]
-    n_poly = 0
-    for level in (5, 6):
-        hp = skycache._hp(level)
-        for ra0, dec0 in places:
-            tile = int(skycache.tile_of(level, np.array([ra0]), np.array([dec0]))[0])
-            poly = skycache.tile_polygon(level, tile)
-            if poly is None:
-                continue
-            n_poly += 1
-            cra, cdec, r = skycache.tile_cone(level, tile)
-            pr, pd = np.array(poly).T
-            assert (skycache._sep(cra, cdec, pr, pd) <= r + 1e-6).all()
-            blon, blat = hp.boundaries_lonlat(np.array([tile]), step=256)
-            bra, bdec = blon.to_value(u.deg)[0], blat.to_value(u.deg)[0]
-            assert _in_polygon(bra, bdec, poly, cra, cdec).all(), (level, ra0, dec0)
-            assert _in_polygon(*_pushed(cra, cdec, bra, bdec, 0.5 / 60), poly, cra, cdec).all(), (level, ra0, dec0)
-            d = r * np.sqrt(rng.uniform(0, 1, 4000))
-            from astropy.coordinates import SkyCoord
-            q = SkyCoord(cra * u.deg, cdec * u.deg).directional_offset_by(rng.uniform(0, 2 * np.pi, 4000) * u.rad,
-                                                                          d * u.deg)
-            inside = skycache.tile_of(level, q.ra.deg, q.dec.deg) == tile
-            assert inside.sum() > 500 and _in_polygon(q.ra.deg[inside], q.dec.deg[inside], poly, cra, cdec).all()
-            # about half the cone: what GAVO reads
-            assert _in_polygon(q.ra.deg, q.dec.deg, poly, cra, cdec).mean() < 0.65
-    assert n_poly >= 66
-
-
-def test_gavo_is_asked_the_tile_polygon_and_the_cone_when_it_fails_on_it(monkeypatch):
-    from astropy.table import Table
-    asked = []
-    fail = {"how": None}
-
-    def gavo(query):
-        asked.append("POLYGON" if "POLYGON(" in query else "CIRCLE" if "CIRCLE(" in query else "?")
-        if fail["how"] is not None and "POLYGON(" in query:
-            raise fail["how"]
-        return Table({"source_id": np.array([1], np.int64), "ra": [97.9], "dec": [4.9], "phot_g_mean_mag": [12.0]})
-    monkeypatch.setattr(gaia_archive, "_gavo", gavo)
-    poly = skycache.tile_polygon(6, 22246)
-    need = ["RA_ICRS", "DE_ICRS", "Gmag"]
-    gaia_archive._gavo_cone(need, 97.98, 4.95, 0.72, "<16", polygon=poly)
-    assert asked == ["POLYGON"]
-    fail["how"] = ValueError("the service cannot read this polygon")
-    asked.clear()
-    assert len(gaia_archive._gavo_cone(need, 97.98, 4.95, 0.72, "<16", polygon=poly)) == 1
-    assert asked == ["POLYGON", "CIRCLE"]
-    import requests
-    fail["how"] = requests.ConnectionError("connection refused")             # unreachable: not the cone as well
-    asked.clear()
-    with pytest.raises(requests.ConnectionError):
-        gaia_archive._gavo_cone(need, 97.98, 4.95, 0.72, "<16", polygon=poly)
-    assert asked == ["POLYGON"]
-
-
-def test_a_tile_holds_the_same_stars_from_the_polygon_as_from_the_cone(monkeypatch, tmp_path):
-    """The tiles saved are those of the cones before: the stars of the polygon that fall in the tile."""
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
-    sky = _sky(n=200000, ra0=98.0, dec0=5.0, half=4.0, seed=12)
-    cone_only = FakeGaia(sky)
-
-    def by_polygon(ra, dec, radius, cols, gfilter, say=None, polygon=None):
-        r = cone_only(ra, dec, radius, cols + ["RA_ICRS", "DE_ICRS"], gfilter)
-        m = _in_polygon(r["RA_ICRS"], r["DE_ICRS"], polygon, ra, dec)
-        assert 0.3 < m.mean() < 0.65                                          # half the stars of the cone
-        return {k: r[k][m] for k in cols}
-    cone = [(98.0, 5.0, 2.0)]
-    got = {}
-    for name, fake in (("cone", lambda *a, polygon=None, **k: cone_only(*a, **k)), ("polygon", by_polygon)):
-        monkeypatch.setenv("ASTRO_GPU_HOME", str(tmp_path / name))
-        monkeypatch.setattr(gaia_archive, "gaia_cone", fake)
-        got[name] = skycache.gaia_stars(cone, COLS, "<16", fetch=True)
-        lay = skycache.layers()[0]
-        got[name + " tiles"] = {p.name: lay.load(int(p.stem)) for p in lay.dir.glob("*.npz")}
-    assert got["cone tiles"].keys() == got["polygon tiles"].keys() and len(got["cone tiles"]) > 3
-    for t, a in got["cone tiles"].items():
-        b = got["polygon tiles"][t]
-        assert all(np.array_equal(a[k], b[k]) for k in COLS)
-    assert all(np.array_equal(got["cone"][k], got["polygon"][k]) for k in COLS)
-
-
-# ------------------------------------------------------------------ sky tiles
-
-def test_a_field_inside_fetched_tiles_needs_no_network(monkeypatch):
-    """The catalogue was cached by exact cone centre: a re-stack of the same field (its solution moves the centres a
-    little) downloaded everything again. Tiles: the first field fetches its tiles (an explicit fetch: a run never
-    fetches), the moved field reads them, offline too; the stars are exactly those of the cones. Without ``fetch``,
-    tiles that are not there are never asked: a clear error at once."""
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
+def test_a_field_inside_the_cached_tiles_needs_no_network(monkeypatch):
+    """The tiles an earlier version cached serve any field inside them (a re-stack moves the cone centres a little); the
+    stars are exactly those of the cones, and a brighter query with fewer columns is served by the same tiles. Tiles that
+    are not there are never asked of anyone: a clear error at once."""
     sky = _sky()
-    fake = FakeGaia(sky)
-    monkeypatch.setattr(gaia_archive, "gaia_cone", fake)
+    _write_layer(sky, None, 18.5, 6, COLS)
     cones = [(150.0 + dx, 30.0 + dy, 0.75) for dx in (-0.6, 0.6) for dy in (-0.6, 0.6)]
-    with pytest.raises(skycache.SkyUnavailable, match="not on this computer"):
-        skycache.gaia_stars(cones, COLS, "<18.5")                  # not fetched: nothing asked
-    assert fake.calls == 0
-    got = skycache.gaia_stars(cones, COLS, "<18.5", fetch=True)
-    assert fake.calls > 0 and _same_set(got, _brute(sky, cones, COLS, None, 18.5))
-    i = np.argsort(got["Source"])
+    got = skycache.gaia_stars(cones, COLS, "<18.5")
     ref = _brute(sky, cones, COLS, None, 18.5)
-    j = np.argsort(ref["Source"])
+    assert _same_set(got, ref)
+    i, j = np.argsort(got["Source"]), np.argsort(ref["Source"])
     assert all(np.array_equal(got[k][i], ref[k][j]) for k in COLS)
-    n = fake.calls
     moved = [(ra + 0.03, dec - 0.02, r * 0.95) for ra, dec, r in cones]
     assert _same_set(skycache.gaia_stars(moved, COLS, "<18.5"), _brute(sky, moved, COLS, None, 18.5))
-    assert fake.calls == n
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "1")
-    assert _same_set(skycache.gaia_stars(moved, COLS, "<18.5"), _brute(sky, moved, COLS, None, 18.5))
-    # a brighter query with fewer columns (the astrometry's) is served by the same tiles, offline
     few = ["RA_ICRS", "DE_ICRS", "Gmag"]
     small = [(150.1, 29.9, 0.4)]
     b = skycache.gaia_stars(small, few, "<13.25")
-    ref = _brute(sky, small, few, None, 13.25)
-    assert np.array_equal(np.sort(b["Gmag"]), np.sort(ref["Gmag"]))
-    # a field elsewhere, offline: a clear error at once, not a wait
+    assert np.array_equal(np.sort(b["Gmag"]), np.sort(_brute(sky, small, few, None, 13.25)["Gmag"]))
     t = time.monotonic()
-    with pytest.raises(skycache.SkyUnavailable):
-        skycache.gaia_stars([(160.0, 35.0, 0.5)], COLS, "<18.5", fetch=True)
+    with pytest.raises(skycache.SkyUnavailable, match="not on this computer"):
+        skycache.gaia_stars([(160.0, 35.0, 0.5)], COLS, "<18.5")        # a field elsewhere
+    with pytest.raises(skycache.SkyUnavailable, match="not on this computer"):
+        skycache.gaia_stars(cones, COLS, "<19.5")                        # fainter than any layer holds
     assert time.monotonic() - t < 5
 
 
-def test_a_magnitude_range_layer_and_its_ladder(monkeypatch):
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
+def test_a_magnitude_range_layer_serves_its_range_only():
     sky = _sky(seed=2)
-    fake = FakeGaia(sky)
-    monkeypatch.setattr(gaia_archive, "gaia_cone", fake)
     few = ["RA_ICRS", "DE_ICRS", "Gmag"]
+    _write_layer(sky, 18.5, 20.5, 6, few)
     cones = [(150.0, 30.0, 1.2)]
-    f = skycache.gaia_stars(cones, few, "18.5..20.5", fetch=True)
-    ref = _brute(sky, cones, few, 18.5, 20.5)
-    assert np.array_equal(np.sort(f["Gmag"]), np.sort(ref["Gmag"]))
-    # the astrometry's G < 13.3 fetches the G < 13.5 layer (level 5); G < 13.45 then reads it
-    a = skycache.gaia_stars(cones, few, "<13.3", fetch=True)
-    n = fake.calls
-    b = skycache.gaia_stars(cones, few, "<13.45", fetch=True)
-    assert fake.calls == n
-    assert np.array_equal(np.sort(b["Gmag"]), np.sort(_brute(sky, cones, few, None, 13.45)["Gmag"]))
-    assert (a["Gmag"] < 13.3).all()
-    names = {lay.dir.name.split("_")[0] for lay in skycache.layers()}
-    assert names == {"G18.5-20.5", "G-13.5"}
+    f = skycache.gaia_stars(cones, few, "18.5..20.5")
+    assert np.array_equal(np.sort(f["Gmag"]), np.sort(_brute(sky, cones, few, 18.5, 20.5)["Gmag"]))
+    with pytest.raises(skycache.SkyUnavailable):
+        skycache.gaia_stars(cones, few, "<16")
 
 
-# ------------------------------------------------------------------ online services
-
-@pytest.fixture
-def silent_server():
-    """A server that accepts connections and never answers."""
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    s.listen(16)
-    conns, stop = [], threading.Event()
-
-    def accept():
-        s.settimeout(0.2)
-        while not stop.is_set():
-            try:
-                conns.append(s.accept()[0])
-            except OSError:
-                continue
-    t = threading.Thread(target=accept, daemon=True)
-    t.start()
-    yield f"http://127.0.0.1:{s.getsockname()[1]}/"
-    stop.set()
-    for c in conns:
-        c.close()
-    s.close()
-
-
-def test_a_silent_service_costs_seconds_and_the_next_one_answers(monkeypatch, silent_server):
-    """VizieR accepting connections and never answering made the first query wait its whole 600-900 s timeout.
-    Now the service fails its probe within the probe's timeout, is set aside, and the next source is asked at once,
-    with one plain line in the log (one, not one per tile)."""
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
-    monkeypatch.setattr(online, "PROBES", {"vizier": silent_server})
-    monkeypatch.setattr(online, "PROBE_S", (1.0, 1.0))
-    sky = _sky(seed=3)
-    asked = []
-
-    def gavo_cone(need, ra, dec, radius, gfilter, depth=0, polygon=None):
-        asked.append(radius)
-        from astropy.table import Table
-        r = FakeGaia(sky)(ra, dec, radius, need + ["Source"], gfilter)
-        return Table({gaia_archive.GAIA_COLS[k]: v for k, v in r.items()})
-    monkeypatch.setattr(gaia_archive, "_gavo_cone", gavo_cone)
-    logs = []
-    t = time.monotonic()
-    got = skycache.gaia_stars([(150.0, 30.0, 0.8)], ["RA_ICRS", "DE_ICRS", "Gmag"], "<16",
-                              log=lambda m, level="info": logs.append((level, m)), fetch=True)
-    assert time.monotonic() - t < 8
-    assert asked and len(got["Gmag"]) == len(_brute(sky, [(150.0, 30.0, 0.8)], ["Gmag"], None, 16)["Gmag"])
-    assert online.is_down("vizier")
-    assert [m for lv, m in logs if lv == "warning"] == [
-        "VizieR (CDS, Strasbourg) does not answer (silent): Gaia stars from GAVO (Heidelberg)"]
-
-
-@pytest.fixture
-def not_found_server():
-    """A server that answers every request with a 404 page (the CDS during its incident of November 2026); counts them."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    hits = []
-
-    class H(BaseHTTPRequestHandler):
-        def do_GET(self):
-            hits.append(self.path)
-            body = b"<html><body>404 This page is currently unavailable.</body></html>"
-            self.send_response(404)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *a):
-            pass
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_address[1]}/viz-bin/votable", hits
-    srv.shutdown()
-    srv.server_close()
-
-
-def test_a_service_answering_not_found_is_set_aside_before_any_query_and_the_tiles_are_counted(monkeypatch,
-                                                                                                not_found_server):
-    """Issue #129: VizieR answered its probe with a 404 page, which was taken for an answer: every chain of sources
-    sent its first query there before GAVO. Now the probe sets it aside: no query at all, one line in the log, and the
-    progress line counts the sky tiles ("Gaia stars: tile 3 of 9"), then the log says how long they took."""
-    url, hits = not_found_server
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
-    monkeypatch.setattr(online, "PROBES", {"vizier": url})
-    sky = _sky(seed=3)
-
-    def no_vizier(*a, **k):
-        raise AssertionError("VizieR asked although its probe failed")
-    monkeypatch.setattr(gaia_archive, "_vizier", no_vizier)
-
-    def gavo_cone(need, ra, dec, radius, gfilter, depth=0, polygon=None):
-        from astropy.table import Table
-        r = FakeGaia(sky)(ra, dec, radius, need + ["Source"], gfilter)
-        return Table({gaia_archive.GAIA_COLS[k]: v for k, v in r.items()})
-    monkeypatch.setattr(gaia_archive, "_gavo_cone", gavo_cone)
-    logs, lines = [], []
-    cone = [(150.0, 30.0, 2.5)]
-    got = skycache.gaia_stars(cone, ["RA_ICRS", "DE_ICRS", "Gmag"], "<16", log=lambda m, level="info": logs.append(
-        (level, m)), progress=lambda f, m: lines.append((f, m)), fetch=True)
-    assert len(got["Gmag"]) == len(_brute(sky, cone, ["Gmag"], None, 16)["Gmag"])
-    assert len(hits) == 1 and online.is_down("vizier")                       # the probe only, once
-    assert [m for lv, m in logs if lv == "warning"] == [
-        "VizieR (CDS, Strasbourg) answers with an error (HTTP 404): Gaia stars from GAVO (Heidelberg)"]
-    n = len(skycache.tiles_in_cone(5, *cone[0]))
-    assert n > 3 and [m for _f, m in lines] == [f"Gaia stars: tile {k} of {n}" for k in range(1, n + 1)]
-    assert [f for f, _m in lines] == [k / n for k in range(1, n + 1)]
-    assert any(lv == "info" and m.startswith(f"Gaia stars: {n} sky tiles downloaded in ") for lv, m in logs)
-
-
-class _Ctx:
-    def __init__(self):
-        self.logs, self.lines = [], []
-
-    def log(self, m, level="info"):
-        self.logs.append((level, m))
-
-    def progress(self, f, m=""):
-        self.lines.append((f, m))
-
-
-class _Batches:
-    """A batch service of XP spectra: gives the stars whose id is not a multiple of ``skip``, records how many of its
-    queries run at once; ``bad``: a source id whose batch fails with a query error."""
-
-    def __init__(self, skip, grid, bad=None):
-        self.skip, self.grid, self.bad = skip, grid, bad
-        self.batches, self.now, self.most = [], 0, 0
-        self.lock = threading.Lock()
-
-    def __call__(self, sids, batch=500):
-        with self.lock:
-            self.batches.append(list(sids))
-            self.now += 1
-            self.most = max(self.most, self.now)
-        time.sleep(0.05)
-        with self.lock:
-            self.now -= 1
-        if self.bad in sids:
-            raise ValueError("query error")
-        return {int(s): (self.grid.copy(), np.full(len(self.grid), float(s % 97))) for s in sids if s % self.skip}
-
-
-def _xp_run(monkeypatch, tmp_path, url, sub, at_once, bad=None):
-    from astro_gpu.stages import catalogs
-    monkeypatch.setenv("ASTRO_GPU_HOME", str(tmp_path / sub))            # a cache of its own: everything downloaded
-    online.reset()
-    monkeypatch.setattr(online, "PROBES", {"vizier": url})
-    monkeypatch.setattr(catalogs, "XP_AT_ONCE", at_once)
-
-    def no_vizier(sid):
-        raise AssertionError("a star asked of VizieR although its probe failed")
-    monkeypatch.setattr(gaia_archive, "xp_spectrum_vizier", no_vizier)
-    gavo = _Batches(3, gaia_archive.GAVO_XP_WAVELENGTHS, bad)
-    esa = _Batches(1000003, gaia_archive.XP_WAVELENGTHS)
-    monkeypatch.setattr(gaia_archive, "xp_spectra_gavo", gavo)
-    monkeypatch.setattr(gaia_archive, "xp_spectra_esa", esa)
-    ctx = _Ctx()
-    rows = catalogs._xp_spectra(ctx, np.arange(1001, 2701, dtype=np.int64), 0.85, 1.0, fetch=True)
-    return rows, ctx, gavo, esa
-
-
-def test_xp_spectra_skip_a_service_in_error_and_come_by_batches_two_at_a_time(monkeypatch, tmp_path, not_found_server):
-    """Issue #129: with VizieR answering a 404 page, each of the field's colour stars was asked of it, one query each,
-    and the line counted them as if given; then GAVO had them all in one call, its batches one after the other, the
-    line still. Now VizieR is set aside by its probe (no star asked), the batches run two at a time on GAVO and one at
-    a time on the ESA archive, the line counts them, and the spectra are those of the batches one after the other."""
-    url, hits = not_found_server
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
-    one, ctx1, g1, e1 = _xp_run(monkeypatch, tmp_path, url, "a", {})
-    two, ctx2, g2, e2 = _xp_run(monkeypatch, tmp_path, url, "b", {"gavo": 2})
-    assert g1.most == 1 and g2.most == 2 and e1.most == e2.most == 1
-    assert sorted(map(tuple, g1.batches)) == sorted(map(tuple, g2.batches)) and len(g2.batches) == 4
-    assert all(len(b) <= 500 for b in g2.batches)
-    assert len(one) == len(two) == 1700 and all(r is not None for r in two)
-    for a, b in zip(one, two):
-        assert np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1])
-    # the stars GAVO lacks (one in three) came from the ESA archive: two grids, all brought to GAVO's
-    assert all(len(r[0]) == len(gaia_archive.GAVO_XP_WAVELENGTHS) for r in two)
-    assert sum(len(b) for b in e2.batches) == len([s for s in range(1001, 2701) if s % 3 == 0])
-    # the line: the stars GAVO gave, batch by batch, then those asked of the ESA archive; never back
-    n = [int(m.split()[2]) for _f, m in ctx2.lines]
-    assert all(m.startswith("XP spectra: ") and m.endswith(" of 1700") for _f, m in ctx2.lines)
-    assert n[0] == 0 and n[-1] == 1700 and len(n) == 1 + 4 + len(e2.batches) and n == sorted(n)
-    assert n[4] == 1700 - len([s for s in range(1001, 2701) if s % 3 == 0])
-    assert [f for f, _m in ctx2.lines] == sorted(f for f, _m in ctx2.lines) and ctx2.lines[-1][0] == 1.0
-    assert [m for lv, m in ctx2.logs if lv == "warning"] == [
-        "VizieR (CDS, Strasbourg) answers with an error (HTTP 404): XP spectra from GAVO (Heidelberg)"]
-    assert len(hits) == 2                                                     # one probe a run, no star
-
-
-def test_a_batch_that_fails_sends_only_its_own_stars_to_the_next_service(monkeypatch, tmp_path, not_found_server):
-    url, _hits = not_found_server
-    monkeypatch.setenv("ASTRO_GPU_OFFLINE", "")
-    rows, ctx, gavo, esa = _xp_run(monkeypatch, tmp_path, url, "c", {"gavo": 2}, bad=1600)
-    lost = next(b for b in gavo.batches if 1600 in b)
-    asked = sorted(s for b in esa.batches for s in b)
-    assert asked == sorted(set(lost) | {s for b in gavo.batches for s in b if s % 3 == 0})
-    assert all(r is not None for r in rows)
-    assert "GAVO (Heidelberg) failed (query error): 500 XP spectra still missing" in [m for _lv, m in ctx.logs]
+def test_the_hipparcos_stars_and_the_blind_solver_indexes_are_found_where_the_star_data_are(tmp_path, monkeypatch):
+    """core/sky_catalogue.py installs them beside the extracts (the cache's ``gaia_extracts`` folder, an installation's
+    ``sky``): ``find`` looks there too, and says they are not on this computer when they are not."""
+    from astro_gpu.core import blindsolve
+    with pytest.raises(skycache.SkyUnavailable, match="Hipparcos"):
+        skycache.hipparcos(["HIP"], 9.0)
+    with pytest.raises(skycache.SkyUnavailable, match="blind solver"):
+        blindsolve.SkyIndex("hip")
+    own = sirilcat.own_dir()
+    skycache.save_npz(own / "hipparcos" / "hip_main_v9.npz", HIP=np.arange(3.0), RAICRS=np.zeros(3))
+    ra, dec = np.array([10.0, 20.0, 30.0, 40.0, 50.0]), np.zeros(5)
+    skycache.save_npz(own / "quads_hip_k8.npz", ra=ra, dec=dec, codes=np.zeros((2, 4), np.float32),
+                      quads=np.zeros((2, 4), np.int32))
+    assert skycache.hipparcos(["HIP"], 9.0)["HIP"].tolist() == [0.0, 1.0, 2.0]
+    assert skycache.find("quads_hip_k8.npz") == own / "quads_hip_k8.npz"
+    assert len(blindsolve.SkyIndex("hip").ra) == 5
+    with pytest.raises(skycache.SkyUnavailable, match="Tycho-2"):
+        blindsolve.SkyIndex("tyc")
 
 
 def test_a_query_over_its_budget_is_abandoned_and_the_service_set_aside(monkeypatch):
@@ -503,14 +176,11 @@ def test_a_query_over_its_budget_is_abandoned_and_the_service_set_aside(monkeypa
     monkeypatch.setattr(online, "PROBES", {})
     t = time.monotonic()
     with pytest.raises(online.ServiceDown) as e:
-        online.call("gavo", lambda: time.sleep(5), 0.3)
+        online.call("hips2fits", lambda: time.sleep(5), 0.3)
     assert time.monotonic() - t < 2 and "took more than" in e.value.why
-    assert online.is_down("gavo")
+    assert online.is_down("hips2fits")
     with pytest.raises(online.ServiceDown):                       # set aside: not asked again
-        online.call("gavo", lambda: 1, 5)
-    said = []
-    r = online.first_answer([("gavo", lambda: 1), ("esa", lambda: 2)], "the things", lambda m, level="w": said.append(m))
-    assert r == 2 and said == ["GAVO (Heidelberg) took more than 0 s: the things from the ESA Gaia archive"]
+        online.call("hips2fits", lambda: 1, 5)
 
 
 # ------------------------------------------------------------------ the offline extracts

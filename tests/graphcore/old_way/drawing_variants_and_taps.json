@@ -137,7 +137,7 @@
   "6": 12,
   "7": 15
  },
- "limits": "model opened without warm-up: no facts (colour notes, session problems); sky_missing and image_problem left empty",
+ "limits": "model opened without warm-up: no facts (colour notes, session problems); image_problem left empty",
  "model_state": {
   "current": 0,
   "sel_step": "sources",
@@ -165,7 +165,6 @@
    "i": 0,
    "key": "sources",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": null,
    "paths": [
@@ -206,7 +205,6 @@
    "i": 1,
    "key": "calibration",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -245,7 +243,6 @@
    "i": 2,
    "key": "alignement",
    "lid": null,
-   "missing": "",
    "num": 1,
    "parent": 1,
    "paths": [
@@ -280,7 +277,6 @@
    "i": 3,
    "key": "selection",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 2,
    "paths": [
@@ -318,7 +314,6 @@
    "i": 4,
    "key": "empilement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 3,
    "paths": [
@@ -356,7 +351,6 @@
    "i": 5,
    "key": "astrometrie",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 4,
    "paths": [
@@ -395,7 +389,6 @@
    "i": 6,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 5,
    "paths": [
@@ -434,7 +427,6 @@
    "i": 7,
    "key": "couleur",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 6,
    "paths": [
@@ -467,7 +459,6 @@
    "i": 8,
    "key": "debruitage",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 7,
    "paths": [
@@ -514,7 +505,6 @@
    "i": 9,
    "key": "couleur",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 6,
    "paths": [
@@ -546,7 +536,6 @@
    "i": 10,
    "key": "debruitage",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 9,
    "paths": [
@@ -577,7 +566,6 @@
    "i": 11,
    "key": "debruitage",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 9,
    "paths": [
@@ -608,7 +596,6 @@
    "i": 12,
    "key": "fond~2",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 7,
    "paths": [
@@ -643,7 +630,6 @@
    "i": 13,
    "key": "alignement",
    "lid": null,
-   "missing": "",
    "num": 2,
    "parent": 1,
    "paths": [
@@ -673,7 +659,6 @@
    "i": 14,
    "key": "selection",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 13,
    "paths": [
@@ -704,7 +689,6 @@
    "i": 15,
    "key": "empilement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 14,
    "paths": [
@@ -726,7 +710,6 @@
    "i": 16,
    "key": "final",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": null,
    "paths": [

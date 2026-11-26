@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .graphnode import ENGINE_BLOCK, PAUSE_COL, RESUMES, Node, block_title, node_title, run_jobs, view_block
+from .graphnode import PAUSE_COL, RESUMES, Node, block_title, node_title, run_jobs, view_block
 from .i18n import _, all_workflows, hm, plural
 from .icons import IconText, draw, set_icon
 from .services.run import (
@@ -596,6 +596,18 @@ class RunDialog(QDialog):
         views = [v for v in views.values() if v is not None]
         return all(self.s.has_data(v) for v in views) if views else self.s.has_data()
 
+    def _star_data_note(self) -> list[str]:
+        """Information: the plan reads star data and the installation is incomplete; Run downloads what is missing first."""
+        from ..core import gaia_extracts as ge
+        from ..core import sky_catalogue as sc
+        if self.plan is None or not sc.needed_by(self.plan):
+            return []
+        todo = sc.missing()
+        if not todo:
+            return []
+        return [_("Star data incomplete ({size} to download): Run downloads them first, then starts.").format(
+            size=ge.human(sum(w.size for w in todo)))]
+
     def _asterion_note(self) -> list[str]:
         """Information, not a warning: the plan has an Astrometry and the plate solver of its first solution is not
         there or cannot run, so the field is found by FLOAT's own search (the run's log and Inspect's checks say it)."""
@@ -641,24 +653,19 @@ class RunDialog(QDialog):
             v = self.s.view(wid)
             out.append(_('"{name}" not run: {why}').format(
                 name=v.name if v is not None else self.names.get(wid, "?"), why=_(why)))
-        from ..core import sky_data
         for wid, steps in (getattr(self.plan, "left_out", None) or {}).items():
             v = self.s.view(wid)
-            for stage, why in steps.items():
+            for stage, why in steps.items():          # an input left to wire (issue #165): its block's name, its reason
                 base = stage.split("@")[0].split("~")[0]
                 name = v.name if v is not None else self.names.get(wid, "?")
-                if base not in sky_data.NEEDED_BY:    # an input left to wire (issue #165): its block's name, its reason
-                    from .graphnode import STEPS
-                    from .model import wiring_text
-                    key = next((x["key"] for x in STEPS if base in x["stages"]), "")
-                    out.append(_('"{name}": {block} and the blocks after it not run: {why}').format(
-                        name=name, block=block_title(None, key) if key else stage,
-                        why=wiring_text(why) or _(why).rstrip(".")))
-                    continue
-                b = ENGINE_BLOCK.get(sky_data.NEEDED_BY.get(base, ""), "")   # the data of the sky not on this computer
-                out.append(_('"{name}": {block} and the blocks after it not run: {why}. Install it: Settings › '
-                             'Catalogs & astrometry').format(name=name, block=block_title(None, b) if b else stage,
-                                                            why=_(why).rstrip(".")))
+                from .graphnode import STEPS
+                from .model import wiring_text
+                key = next((x["key"] for x in STEPS if base in x["stages"]), "")
+                out.append(_('"{name}": {block} and the blocks after it not run: {why}').format(
+                    name=name, block=block_title(None, key) if key else stage,
+                    why=wiring_text(why) or _(why).rstrip(".")))
+        if not (self.c is not None and self.c.installing):
+            out += [INFO_NOTE + text for text in self._star_data_note()]
         out += [INFO_NOTE + text for text in self._asterion_note()]
         if self.plan is not None and self.plan.jobs and self.has_data():      # no disk need without data (6.7)
             free = self.c.free_gb() if self.c is not None else None
@@ -719,6 +726,9 @@ class RunDialog(QDialog):
         if ph == "end":
             self._fill_recap(t)
         # the footer
+        installing = self.c is not None and self.c.installing and self.c.plan is self.plan
+        failed_install = (self.c is not None and bool(self.c.install_error) and self.c.plan is self.plan
+                          and not self.c.running)
         self.summary.setStyleSheet("")
         self.detail.setText("")
         if ph == "plan" and paused:
@@ -727,6 +737,15 @@ class RunDialog(QDialog):
         elif ph == "plan" and n and not data:                # no figures without data, and why (exploration 6.7)
             self.summary.setText(_("Nothing to compute"))
             self.detail.setText(self.no_data_text())
+        elif ph == "plan" and installing:                    # the star data of the plan are being downloaded
+            done, total, text = self.c.install_state
+            self.summary.setText(_("Star data incomplete: downloading {pct} %").format(
+                pct=int(100 * done / max(total, 1))))
+            self.detail.setText(text)
+        elif ph == "plan" and failed_install:                # it did not finish: why, and that the next Run goes on
+            self.summary.setText(_("Star data not downloaded"))
+            self.summary.setStyleSheet(f"color: {BAD};")
+            self.detail.setText(self.c.install_error)
         elif ph == "plan":
             tot = self.plan.seconds if self.plan is not None else 0.0
             self.summary.setText(_("Duration: {t} · disk: {gb} GB").format(
@@ -738,8 +757,8 @@ class RunDialog(QDialog):
         stopping = self.c is not None and self.c.phase == "stopping"
         self.b_cancel.setText(_("Cancel") if ph == "plan" and not paused else _("Close"))
         self.b_cancel.setVisible(ph != "end")
-        self.b_stop.setVisible(ph == "run")
-        self.b_stop.setEnabled(self.c is not None and self.c.phase in ("starting", "running"))   # starting too (round 2)
+        self.b_stop.setVisible(ph == "run" or installing)
+        self.b_stop.setEnabled(installing or self.c is not None and self.c.phase in ("starting", "running"))   # starting too (round 2)
         self.b_stop.setText(_("Stopping…") if stopping else _("Stop"))
         self.b_run.setVisible(ph == "plan" and not paused)
         # what refuses the plan (a fusion, data that cannot be computed: 1.1), among the workflows it computes; a plan
@@ -750,7 +769,7 @@ class RunDialog(QDialog):
             self.summary.setText(error or refusal_text(refused))
             self.summary.setStyleSheet(f"color: {BAD};")
             self.detail.setText("")
-        busy = self.c is not None and self.c.running
+        busy = self.c is not None and (self.c.running or self.c.installing)
         self.b_run.setEnabled(bool(n) and data and not refused and not error and not busy)
         # a greyed Run says why (exploration 6.7)
         self.b_run.setToolTip("" if self.b_run.isEnabled() else

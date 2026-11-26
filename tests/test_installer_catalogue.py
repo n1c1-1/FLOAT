@@ -29,20 +29,23 @@ BASE = "https://github.com/n1c1-1/FLOAT/releases/download/sky-data-v1/"
 # ------------------------------------------------------------------ the lock's part
 
 def test_lock_star_catalogue_is_complete_and_exact():
-    """49 assets of the release: the positions and the 48 compact spectra chunks, each with its URL, size, checksum and the
-    folder it goes to (the sub-folder the reader expects for the spectra), each name once."""
+    """52 assets of the release: the positions, the 48 compact spectra chunks, the Hipparcos list and the blind solver's two
+    indexes, each with its URL, size, checksum and the folder it goes to (the sub-folder the reader expects for the
+    spectra and for the Hipparcos list), each name once."""
     part = LOCK["star_catalogue"]
     files = part["files"]
-    assert part["version"] == "sky-data-v1" and len(files) == 49
+    assert part["version"] == "sky-data-v1" and len(files) == 52
     assert files[0]["filename"] == ASTRO and files[0]["dest"] == ""
-    assert [f["filename"] for f in files[1:]] == [f"float_xp_compact_{n}.dat" for n in range(48)]
-    assert {f["dest"] for f in files[1:]} == {sirilcat.COMPACT_DIR}
-    assert len({f["filename"] for f in files}) == 49
+    assert [f["filename"] for f in files[1:49]] == [f"float_xp_compact_{n}.dat" for n in range(48)]
+    assert {f["dest"] for f in files[1:49]} == {sirilcat.COMPACT_DIR}
+    assert [(f["filename"], f["dest"]) for f in files[49:]] == [("hip_main_v9.npz", "hipparcos"),
+                                                                 ("quads_hip_k8.npz", ""), ("quads_tyc_k7.npz", "")]
+    assert len({f["filename"] for f in files}) == 52
     for f in files:
         assert f["url"] == BASE + f["filename"] and f["name"] == "star_catalogue" and f["version"] == "sky-data-v1"
         assert len(f["sha256"]) == 64 and int(f["sha256"], 16) >= 0 and f["size"] > 0
         fetch.Wheel(**f)                                           # the keys the setup reads, nothing else
-    assert 1.8e9 < sum(f["size"] for f in files) < 1.9e9
+    assert 2.5e9 < sum(f["size"] for f in files) < 2.7e9
 
 
 def test_lock_star_catalogue_sizes_are_the_local_files():
@@ -130,7 +133,7 @@ def served(monkeypatch):
 
 @pytest.fixture
 def world(tmp_path, monkeypatch, served):
-    """An installation in tmp_path/app-parent with the lock of the 49 fake files, FLOAT's state elsewhere and no other
+    """An installation in tmp_path/app-parent with the lock of the 52 fake files, FLOAT's state elsewhere and no other
     catalogue on this computer; ``sirilcat.install_dir`` answers its ``sky`` folder as it does in an installed FLOAT."""
     root = tmp_path / "FLOAT"
     (root / "setup").mkdir(parents=True)
@@ -146,6 +149,8 @@ def world(tmp_path, monkeypatch, served):
     monkeypatch.setattr(sirilcat, "install_dir", lambda here=None: root / "sky")
     files = [(ASTRO, "", astro_bytes())] + [(f"float_xp_compact_{n}.dat", sirilcat.COMPACT_DIR, compact_bytes(n))
                                             for n in range(48)]
+    files += [("hip_main_v9.npz", "hipparcos", b"hip" * 50), ("quads_hip_k8.npz", "", b"quads hip" * 40),
+              ("quads_tyc_k7.npz", "", b"quads tyc" * 40)]
     entries = []
     for name, dest, data in files:
         served.data[BASE + name] = data
@@ -181,13 +186,17 @@ def test_the_fetch_lands_where_float_finds_it(world, served):
     inst = installer(world)
     assert inst.fetch_catalogue() == ""
     assert (root / "sky" / ASTRO).is_file() and (root / "sky" / "float_xp_compact" / "float_xp_compact_47.dat").is_file()
-    assert len(served.calls) == 49 and not list((root / "sky").rglob("*.part"))
+    assert len(served.calls) == 52 and not list((root / "sky").rglob("*.part"))
     assert inst.ui.stages == [setup_env.TEXTS["en"]["catalogue_stage"]] and inst.ui.progress[-1].overall_done == sum(
         e["size"] for e in entries)
     sirilcat.reset()
     for kind in (ge.ASTRO, ge.XP):
         st = ge.status(kind)
         assert st.state == "installed" and st.files == st.total and st.own and st.outside is None
+    # the Hipparcos list and the blind solver's indexes: where the stages read them (skycache.find)
+    from astro_gpu.core import skycache, sky_catalogue
+    assert skycache.find("hipparcos/hip_main_v9.npz") == root / "sky" / "hipparcos" / "hip_main_v9.npz"
+    assert skycache.find("quads_tyc_k7.npz") == root / "sky" / "quads_tyc_k7.npz" and sky_catalogue.missing() == []
     assert sirilcat.install_dir() == root / "sky"
 
 

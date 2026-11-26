@@ -244,7 +244,7 @@ class Cost:
     jobs: int
     keys: list[str] = field(default_factory=list)
     skipped: dict[int, str] = field(default_factory=dict)
-    #: {workflow: {stage: why}}: the steps whose data of the sky is not on this computer, left out (core/sky_data.py)
+    #: {workflow: {stage: why}}: the steps left out of the plan (an input to wire)
     left_out: dict[int, dict[str, str]] = field(default_factory=dict)
 
 

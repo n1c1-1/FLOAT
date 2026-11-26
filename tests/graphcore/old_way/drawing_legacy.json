@@ -77,7 +77,7 @@
   "3": 10,
   "4": 17
  },
- "limits": "model opened without warm-up: no facts (colour notes, session problems); sky_missing and image_problem left empty",
+ "limits": "model opened without warm-up: no facts (colour notes, session problems); image_problem left empty",
  "model_state": {
   "current": 0,
   "sel_step": "sources",
@@ -103,7 +103,6 @@
    "i": 0,
    "key": "sources",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": null,
    "paths": [
@@ -140,7 +139,6 @@
    "i": 1,
    "key": "calibration",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -175,7 +173,6 @@
    "i": 2,
    "key": "alignement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 1,
    "paths": [
@@ -208,7 +205,6 @@
    "i": 3,
    "key": "selection",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 2,
    "paths": [
@@ -243,7 +239,6 @@
    "i": 4,
    "key": "empilement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 3,
    "paths": [
@@ -277,7 +272,6 @@
    "i": 5,
    "key": "astrometrie",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 4,
    "paths": [
@@ -310,7 +304,6 @@
    "i": 6,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 5,
    "paths": [
@@ -355,7 +348,6 @@
    "i": 7,
    "key": "couleur",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 6,
    "paths": [
@@ -386,7 +378,6 @@
    "i": 8,
    "key": "debruitage",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 7,
    "paths": [
@@ -419,7 +410,6 @@
    "i": 9,
    "key": "empilement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 3,
    "paths": [
@@ -450,7 +440,6 @@
    "i": 10,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 9,
    "paths": [
@@ -489,7 +478,6 @@
    "i": 11,
    "key": "calibration",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 0,
    "paths": [
@@ -522,7 +510,6 @@
    "i": 12,
    "key": "alignement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 11,
    "paths": [
@@ -552,7 +539,6 @@
    "i": 13,
    "key": "selection",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 12,
    "paths": [
@@ -585,7 +571,6 @@
    "i": 14,
    "key": "empilement",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 13,
    "paths": [
@@ -618,7 +603,6 @@
    "i": 15,
    "key": "astrometrie",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 14,
    "paths": [
@@ -651,7 +635,6 @@
    "i": 16,
    "key": "fond",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 15,
    "paths": [
@@ -694,7 +677,6 @@
    "i": 17,
    "key": "couleur",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": 16,
    "paths": [
@@ -716,7 +698,6 @@
    "i": 18,
    "key": "final",
    "lid": null,
-   "missing": "",
    "num": 0,
    "parent": null,
    "paths": [

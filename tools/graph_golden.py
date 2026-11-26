@@ -368,7 +368,6 @@ def drawing_of(p) -> dict:
     from astro_gpu.client import blocks as cb
     from astro_gpu.client.model import ProjectModel
     m = ProjectModel(p, _stub_worker(), readonly=True, gpu=False)
-    m.sky_missing = lambda *a, **k: ""                  # needs the cost plan: not part of the structure
     m.image_problem = lambda *a, **k: ""                # opens the image file
     m.ready = True
     m._sync(prefetch=False)
@@ -380,7 +379,7 @@ def drawing_of(p) -> dict:
     nodes = [{"i": i, "key": n.key, "ref": n.ref, "parent": ix(n.parent), "children": [ix(c) for c in n.children],
               "paths": [q.pid for q in n.paths], "sid": n.sid, "lid": n.lid, "slot": n.slot, "num": n.num,
               "after": n.after, "handle": n.handle, "cut": n.cut, "grey": n.grey, "broken": n.broken,
-              "waits": n.waits, "missing": n.missing, "bk": jsonable(n._bk)} for i, n in enumerate(g.nodes)]
+              "waits": n.waits, "bk": jsonable(n._bk)} for i, n in enumerate(g.nodes)]
     return {
         "nodes": nodes, "root": ix(g.root), "final": ix(g.final),
         "forks": [{"node": i, "key": n.key, "children": [ix(c) for c in n.children]}
@@ -399,7 +398,7 @@ def drawing_of(p) -> dict:
         "composition_inputs": {str(ix(n)): [[ix(a), side] for a, side in g.composition_inputs[id(n)]]
                                for n in g.nodes if id(n) in g.composition_inputs},
         "model_state": {"current": m.current, "sel_step": m.sel_step, "views": [v.pid for v in m.paths]},
-        "limits": "model opened without warm-up: no facts (colour notes, session problems); sky_missing and "
+        "limits": "model opened without warm-up: no facts (colour notes, session problems); "
                   "image_problem left empty",
     }
 

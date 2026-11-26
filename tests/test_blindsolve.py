@@ -1,17 +1,21 @@
-"""All-sky blind solver: a synthetic field drawn from the catalogue itself must be found again."""
+"""All-sky blind solver: a synthetic field drawn from a synthetic catalogue must be found again. The index is built here
+from random stars (``blindsolve.build_index``, how the two index files of the star data were made); the program itself
+only reads the files."""
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from astro_gpu.core.blindsolve import SkyIndex, _tangent, _unit, solve
+from astro_gpu.core.blindsolve import SkyIndex, _tangent, _unit, build_index, solve
 
 
-@pytest.mark.network
-@pytest.mark.slow
 def test_blind_solve_synthetic_field():
-    idx = SkyIndex("hip", fetch=True)                       # an explicit fetch (a run never fetches)
-    ra0, dec0, scale = 84.0, -2.0, 25.0 / 3600            # Orion belt, 25"/px
+    rng = np.random.default_rng(7)
+    n = 30000                                               # about the density of Hipparcos to V 9.5
+    ra = rng.uniform(0, 360, n)
+    dec = np.degrees(np.arcsin(rng.uniform(-1, 1, n)))
+    codes, quads = build_index(ra, dec, 8)
+    idx = SkyIndex("hip", arrays={"ra": ra, "dec": dec, "codes": codes, "quads": quads})
+    ra0, dec0, scale = 84.0, -2.0, 25.0 / 3600            # 25"/px
     W, H = 1200, 800
     c = _unit(np.array([ra0]), np.array([dec0]))[0]
     near = idx.star_tree.query_ball_point(c, np.radians(6))

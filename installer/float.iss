@@ -45,8 +45,8 @@ LanguageDetectionMethod=uilanguage
 UsePreviousAppDir=yes
 CloseApplications=yes
 RestartApplications=no
-; the CPU case plus the star catalogue (2 GB); the NVIDIA case is checked with the exact figures before downloading
-ExtraDiskSpaceRequired=5368709120
+; the CPU case plus the star data (2.6 GB); the NVIDIA case is checked with the exact figures before downloading
+ExtraDiskSpaceRequired=6442450944
 
 [Languages]
 ; the notices of the data and programs FLOAT carries (build.py writes them from the credits of About), shown before

@@ -1642,16 +1642,6 @@ class Panel(QWidget):
             self.hv.addLayout(acts)
         self.earlier_row(node, st)
         self._bar_at = self.hv.count()                  # the draft bar's place: under the header, above Apply to
-        if getattr(node, "missing", ""):                 # its data of the sky is not here (core/sky_data.py)
-            self.hv.addWidget(label(_("Cannot run: {why}").format(why=node.missing.rstrip(".")),
-                                    "warn", wrap=True))
-            from .settingsdlg import open_catalogs
-            inst = QPushButton(_("Install catalogue"))
-            set_icon(inst, "catalogue", 16)
-            inst.setToolTip(_("Opens Settings › Catalogs & astrometry, where the offline star catalogue is installed. "
-                              "Nothing is downloaded during a run: the runs leave this block out until then."))
-            inst.clicked.connect(lambda: open_catalogs(self))
-            self.hv.addWidget(inst, 0, Qt.AlignLeft)
         if kbase(k) == "align_on":                        # issue #165: its reference, then its settings
             self.reference_row(node)
         # which workflows a change goes to (the Stars block has no setting: nothing to apply)

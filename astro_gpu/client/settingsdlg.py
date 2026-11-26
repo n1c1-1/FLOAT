@@ -36,7 +36,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..core import bright_stars as bs
 from ..core import gaia_extracts as ge
 from ..core import sky_catalogue as sc
 from . import prefs
@@ -86,14 +85,6 @@ def device_items(machine: Machine | None, dev: str = "auto") -> list[tuple[str, 
         out.append((dev, dev, ""))
     out.append((_("CPU only"), "cpu", _("The processor: much slower")))
     return out
-
-
-def open_catalogs(widget) -> None:
-    """Settings › Catalogs & astrometry, where the offline catalogue is installed (a run never downloads it:
-    core/online.py), from a button of the window ``widget`` is in (a block's panel, Home)."""
-    win = widget.window()
-    if hasattr(win, "open_settings"):
-        win.open_settings("catalogs")
 
 
 class SettingsDialog(QDialog):
@@ -598,13 +589,13 @@ class SettingsDialog(QDialog):
         v.addSpacing(6)
 
     def offline_extracts(self, v):
-        """The star data the engine reads offline: their folder, what is installed, the two downloads (the star
-        catalogue, FLOAT's own, and the bright stars; run off the GUI thread by services.extracts, only when a button is
-        pressed)."""
+        """The star data the engine reads offline: their folder, what is installed, and the one download that installs
+        every file missing (run off the GUI thread by services.extracts, when the button is pressed; a run that needs the
+        star data starts it by itself when they are missing: client/services/run.py)."""
         v.addWidget(label(_("Offline star data"), "h2"))
-        v.addWidget(label(_("The star catalogue finds where the image points on the sky and calibrates the colours. "
-                            "Nothing is fetched while a project runs: install it once here, with the buttons below. "
-                            "Without it, the blocks that need it are marked and left out of the runs."), "small", wrap=True))
+        v.addWidget(label(_("The star data find where the image points on the sky and calibrate the colours. Nothing is "
+                            "fetched while a project runs: a run that needs them and finds the installation incomplete "
+                            "downloads what is missing first, or install it here now."), "small", wrap=True))
         where = QLineEdit(str(sc.folder()))
         where.setReadOnly(True)
         where.setCursorPosition(0)
@@ -618,38 +609,25 @@ class SettingsDialog(QDialog):
         self.row(v, _("Folder"), box)
         self.ex = {"status": {}, "button": {}, "tip": {}}
         buttons = QHBoxLayout()
-        # each row says what it holds and which block cannot run without it (the star catalogue: Astrometry and Color;
-        # the bright stars of the whole sky, core/bright_stars.py: their size is what the files take on the disk, built
-        # here from lists of a few MB)
-        cat_size = f"{number(sc.total_bytes() / 1e9, 2)} {_('GB')}"
-        for kind, name, needed, button, tip in (
-                (sc.KIND, _("Star catalogue"),
-                 _("Positions and colours of the stars, {size} · needed by Astrometry and Color").format(size=cat_size),
-                 _("Install ({size})"),
-                 _("Downloads FLOAT's star catalogue ({size}) into the cache folder; a download that stops goes on from "
-                   "where it was. The full Gaia extracts are also read when they are on this computer.")),
-                (bs.KIND, _("Bright stars"), _("Find an unknown field; add the brightest stars Gaia lacks"),
-                 _("Install bright stars ({size})"),
-                 _("Downloads the Hipparcos and Tycho-2 star lists ({download}) and builds the blind solver's index "
-                   "from them: {size} on the disk, about ten minutes. Without it, Astrometry needs the target or its "
-                   "coordinates."))):
-            st = label("", "small", wrap=True)
-            box = QWidget()
-            col = QVBoxLayout(box)
-            col.setContentsMargins(0, 0, 0, 0)
-            col.setSpacing(0)
-            col.addWidget(st)
-            col.addWidget(label(needed, "dim", wrap=True))
-            self.row(v, name, box)
-            gb = cat_size if kind == sc.KIND else f"{number(bs.DISK_BYTES / 1e9)} {_('GB')}"
-            b = QPushButton(button.format(size=gb))
-            b.setToolTip(tip.format(size=gb, download=f"{number(bs.DOWNLOAD_BYTES / 1e6, 0)} {_('MB')}"))
-            self.ex["tip"][kind] = b.toolTip()
-            if kind == sc.KIND:                      # the row says it too: the full extracts are read when present
-                box.setToolTip(b.toolTip())
-            b.clicked.connect(lambda _x=False, k=kind: self._ex_start(k))
-            buttons.addWidget(b)
-            self.ex["status"][kind], self.ex["button"][kind] = st, b
+        st = label("", "small", wrap=True)
+        box = QWidget()
+        col = QVBoxLayout(box)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(st)
+        col.addWidget(label(_("Star positions and colours, Hipparcos stars, blind solver indexes · needed by Astrometry "
+                              "and Color"), "dim", wrap=True))
+        self.row(v, _("Star data"), box)
+        b = QPushButton(_("Install"))
+        tip = _("Downloads the files of the star data this computer does not have yet into the cache folder; a download "
+                "that stops goes on from where it was. The full Gaia extracts are also read when they are on this "
+                "computer.")
+        b.setToolTip(tip)
+        box.setToolTip(tip)
+        self.ex["tip"][sc.KIND] = tip
+        b.clicked.connect(lambda _x=False: self._ex_start(sc.KIND))
+        buttons.addWidget(b)
+        self.ex["status"][sc.KIND], self.ex["button"][sc.KIND] = st, b
         buttons.addStretch(1)
         v.addLayout(buttons)
         bar = QProgressBar()
@@ -684,31 +662,18 @@ class SettingsDialog(QDialog):
             return _("Partly downloaded: {size}").format(size=ge.human(st.part_bytes))
         return _("Not installed")
 
-    def _bright_status_text(self, st) -> str:
-        if st.state == "installed":
-            size = f"{number(st.size / 1e9)} {_('GB')}" if st.size >= 1e9 else f"{number(st.size / 1e6, 0)} {_('MB')}"
-            return _("Installed") + f" · {size}"
-        if st.state == "partial":
-            return _("Partly installed: {n} of {total} files").format(n=st.files, total=st.total)
-        return _("Not installed")
-
     def _ex_refresh(self):
-        """The state of each extract and which buttons can be pressed."""
+        """The state of the star data and whether the button can be pressed."""
         busy = extracts.job().running()
         try:
             for kind, lab in self.ex.get("status", {}).items():
                 b = self.ex["button"][kind]
-                if kind == bs.KIND:
-                    st = bs.status()
-                    lab.setText(self._bright_status_text(st))
-                    done = st.state == "installed"
-                    b.setEnabled(not busy and not done)
-                    b.setToolTip(_("Already installed.") if done else self.ex["tip"][kind])
-                    continue
                 st = sc.status()
                 lab.setText(self._catalogue_status_text(st))
                 done = st.state == "installed"
                 b.setEnabled(not busy and not done)
+                b.setText(_("Install ({size})").format(size=f"{number(sc.missing_bytes() / 1e9, 2)} {_('GB')}")
+                          if not done else _("Install"))
                 b.setToolTip(_("Already installed: {path}").format(path=st.where) if done else self.ex["tip"][kind])
         except RuntimeError:                         # the page was built again meanwhile
             pass

@@ -325,8 +325,8 @@ TIPS = {
     ("astrometry", "focal_mm"): "Read from the files when the camera records it; telescopes usually do not. Empty, "
                                 "the solver searches for the scale (a few minutes).",
     ("astrometry", "scale"): "206.265 × pixel size (µm) / focal length (mm), divided by the drizzle scale.",
-    ("astrometry", "blind"): "Works for fields wider than about 1°; needs the Bright stars installed in Settings › "
-                             "Catalogs & astrometry (nothing is downloaded during a run).",
+    ("astrometry", "blind"): "Works for fields wider than about 1°; needs the star data installed (Settings › "
+                             "Catalogs & astrometry; a run downloads them first when they are missing).",
     ("astrometry", "sip_order"): "3 for refractors with a reducer and for wide fields; 2 for small fields; 0 = pure "
                                  "tangent plane.",
     ("calibrate", "hot_sigma"): "Low values (0.5 to 1) exclude more pixels; with many frames this costs nothing. "

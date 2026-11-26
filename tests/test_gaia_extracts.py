@@ -119,7 +119,8 @@ def test_no_extract_anywhere_the_engine_answers_none(tmp_path):
 
 def test_an_install_of_the_full_extracts_is_still_read_and_counts_as_installed(tmp_path):
     """The extracts a former Settings downloaded (48 spectra chunks of the full form, in our folder) are read by the
-    engine and ``sky_catalogue.status`` says installed: nothing to download again."""
+    engine and ``sky_catalogue`` counts them: what is left to download is FLOAT's own three files (the Hipparcos list and the
+    blind solver's indexes)."""
     from astro_gpu.core import sky_catalogue
     own = sirilcat.own_dir()
     (own / "siril_cat1_healpix8_xpsamp").mkdir(parents=True)
@@ -130,5 +131,12 @@ def test_an_install_of_the_full_extracts_is_still_read_and_counts_as_installed(t
         (own / "siril_cat1_healpix8_xpsamp" / f"siril_cat1_healpix8_xpsamp_{n}.dat").write_bytes(_xp_file(n))
     sirilcat.reset()
     st = sky_catalogue.status()
-    assert (st.state, st.files, st.where, st.outside) == ("installed", 49, own, None)
+    assert (st.state, st.files, st.where, st.outside) == ("partial", 49, own, None)
+    assert [w.filename for w in sky_catalogue.missing()] == ["hip_main_v9.npz", "quads_hip_k8.npz", "quads_tyc_k7.npz"]
+    (own / "hipparcos").mkdir()
+    (own / "hipparcos" / "hip_main_v9.npz").write_bytes(b"x")
+    (own / "quads_hip_k8.npz").write_bytes(b"x")
+    (own / "quads_tyc_k7.npz").write_bytes(b"x")
+    st = sky_catalogue.status()
+    assert (st.state, st.files, st.where, st.outside) == ("installed", 52, own, None)
     assert ge.status(ge.XP).state == "installed" and ge.status(ge.ASTRO).own

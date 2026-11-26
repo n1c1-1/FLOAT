@@ -5,7 +5,8 @@ Index: every Hipparcos star brighter than V 9.5 with its 8 nearest neighbours gi
 and (1,1) - a 4-number code invariant to translation, rotation and scale. The image does the same with its
 brightest stars; matching codes give hypotheses (4 star pairs -> similarity transform) that are verified by
 counting how many other image stars land on catalogue stars. Built for wide fields (> ~2 deg) where enough
-bright stars are present; the index is built once and cached.
+bright stars are present. The two indexes are files of FLOAT's star data (core/sky_catalogue.py), read where the star
+data are installed; they were built once from the Hipparcos and Tycho-2 lists.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ from itertools import combinations
 import numpy as np
 from scipy.spatial import cKDTree
 
-from . import online, skycache
+from . import skycache
 
 
 def _unit(ra, dec):
@@ -73,47 +74,25 @@ def quad_codes(P: np.ndarray):
 
 class SkyIndex:
     """Quad index of a bright-star catalogue: 'hip' (Hipparcos V < 9.5, fields > ~4 deg) or 'tyc' (Tycho-2
-    VT < 11, fields of ~1-6 deg). Read from the cache; ``fetch`` (an explicit action outside a run, never a run: core/
-    online.py): its catalogue downloaded and the index built when it is not there, else ``SkyUnavailable``."""
+    VT < 11, fields of ~1-6 deg). Read from the star data of this computer, else ``SkyUnavailable``."""
 
-    def __init__(self, catalog: str = "hip", k: int | None = None, fetch: bool = False, stars=None, step=None):
+    def __init__(self, catalog: str = "hip", k: int | None = None, arrays: dict | None = None):
+        """``arrays``: the index given as {ra, dec, codes, quads} instead of read (tests, ``build_index``)."""
         self.k = k or K[catalog]
         self.combos = np.array(list(combinations(range(self.k), 3)))
-        name = f"quads_{catalog}_k{self.k}.npz"
-        p = skycache.find(name)             # the cache, else an earlier version's cache (read only)
-        if p is not None:
+        if arrays is None:
+            p = skycache.find(f"quads_{catalog}_k{self.k}.npz")
+            if p is None:
+                which = "Hipparcos" if catalog == "hip" else "Tycho-2"
+                raise skycache.SkyUnavailable(f"the star index of the blind solver ({which}) is not on this computer: "
+                                              "enter the target or its coordinates")
             with np.load(p) as d:
-                self.ra, self.dec, self.codes, self.quads = d["ra"], d["dec"], d["codes"], d["quads"]
-        elif not fetch and stars is None:
-            which = "Hipparcos" if catalog == "hip" else "Tycho-2"
-            raise skycache.SkyUnavailable(f"the star index of the blind solver ({which}) is not on this computer: enter "
-                                          "the target or its coordinates")
-        else:
-            # ``stars``: the (ra, dec) list already on the disk (the installer, core/bright_stars.py, keeps it so that
-            # a cancel during the build does not download it again); ``step(i, n)`` after each of the n neighbour
-            # combinations of the build (progress; it may raise to cancel)
-            self.ra, self.dec = stars if stars is not None else star_list(catalog)
-            self.codes, self.quads = self._build(step)
-            skycache.save_npz(skycache.cache_dir() / name, ra=self.ra, dec=self.dec, codes=self.codes,
-                              quads=self.quads)
+                arrays = {x: d[x] for x in ("ra", "dec", "codes", "quads")}
+        self.ra, self.dec, self.codes, self.quads = (arrays[x] for x in ("ra", "dec", "codes", "quads"))
         self.catalog = catalog
         self.xyz = _unit(self.ra, self.dec)
         self.star_tree = cKDTree(self.xyz)
         self.code_tree = cKDTree(self.codes)
-
-    def _build(self, step=None):
-        xyz = _unit(self.ra, self.dec)
-        _, nb = cKDTree(xyz).query(xyz, self.k + 1)
-        codes, quads = [], []
-        for i, c3 in enumerate(self.combos):
-            if step is not None:
-                step(i, len(self.combos))
-            idx = np.c_[nb[:, 0], nb[:, 1 + c3]]                      # (N, 4) star indices
-            P = np.stack([_tangent_rows(xyz[idx[:, j]], xyz[idx[:, 0]]) for j in range(4)], 1)
-            code, order, ok = quad_codes(P)
-            codes.append(code[ok].astype(np.float32))
-            quads.append(np.take_along_axis(idx, order, 1)[ok].astype(np.int32))
-        return np.concatenate(codes), np.concatenate(quads)
 
 
 def _tangent_rows(xyz, centers):
@@ -129,43 +108,25 @@ def _tangent_rows(xyz, centers):
     return np.stack([(xyz * east).sum(1) / d, (xyz * north).sum(1) / d], 1)
 
 
+def build_index(ra, dec, k: int) -> tuple[np.ndarray, np.ndarray]:
+    """(codes, quads) of the quad index of the stars (ra, dec in degrees): the quads of each star with 3 of its ``k``
+    nearest neighbours. How the two index files of the star data (``quads_hip_k8.npz``, ``quads_tyc_k7.npz``) were made
+    from the Hipparcos and Tycho-2 lists; the program only reads them (``SkyIndex``)."""
+    xyz = _unit(ra, dec)
+    _, nb = cKDTree(xyz).query(xyz, k + 1)
+    codes, quads = [], []
+    for c3 in combinations(range(k), 3):
+        idx = np.c_[nb[:, 0], nb[:, 1 + np.array(c3)]]                # (N, 4) star indices
+        P = np.stack([_tangent_rows(xyz[idx[:, j]], xyz[idx[:, 0]]) for j in range(4)], 1)
+        code, order, ok = quad_codes(P)
+        codes.append(code[ok].astype(np.float32))
+        quads.append(np.take_along_axis(idx, order, 1)[ok].astype(np.int32))
+    return np.concatenate(codes), np.concatenate(quads)
+
+
 #: the two indexes of the blind solver: neighbours per star, and the file each is kept in (the cache)
 K = {"hip": 8, "tyc": 7}
 INDEX_FILES = {c: f"quads_{c}_k{k}.npz" for c, k in K.items()}
-
-
-def star_list(catalog: str, say=None) -> tuple[np.ndarray, np.ndarray]:
-    """(ra, dec) of the whole-sky list an index is built from, downloaded (an explicit action outside a run)."""
-    return _hipparcos(say=say) if catalog == "hip" else _tycho(say=say)
-
-
-def _hipparcos(vmax=9.5, say=None):
-    """Hipparcos stars V < vmax (whole sky): VizieR, its Harvard mirror, the ESA archive (short timeouts)."""
-    from .gaia_archive import hipparcos_all
-    t = hipparcos_all(["RAICRS", "DEICRS"], vmax, say=say)
-    ra, dec = np.asarray(t["RAICRS"], float), np.asarray(t["DEICRS"], float)
-    ok = np.isfinite(ra) & np.isfinite(dec)
-    return ra[ok], dec[ok]
-
-
-def _tycho(vmax=11.0, say=None):
-    """Tycho-2 stars VT < vmax (whole sky, ~1 million): VizieR, its Harvard mirror, the ESA archive."""
-    from .gaia_archive import _esa, _vizier
-
-    def vizier(host):
-        def q():
-            v = _vizier(["RAmdeg", "DEmdeg"], host=host, column_filters={"VTmag": f"<{vmax}"})
-            t = v.query_constraints(catalog="I/259/tyc2", cache=False)[0]
-            return np.asarray(t["RAmdeg"], float), np.asarray(t["DEmdeg"], float)
-        return q
-
-    def esa():
-        t = _esa(f"SELECT ra, dec FROM public.tycho2 WHERE vt_mag < {vmax}")
-        return np.asarray(t["ra"], float), np.asarray(t["dec"], float)
-    ra, dec = online.first_answer([("vizier", vizier("vizier")), ("vizier_cfa", vizier("vizier_cfa")), ("esa", esa)],
-                                  "the Tycho-2 stars", say, budget=900.0)
-    ok = np.isfinite(ra) & np.isfinite(dec)
-    return ra[ok], dec[ok]
 
 
 def solve(xy: np.ndarray, width: int, height: int, index: SkyIndex | None = None, n_stars: int = 60,
