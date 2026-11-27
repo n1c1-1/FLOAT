@@ -7,7 +7,7 @@ The sessions table and the health checks come from the headers of the frames and
 The checks the engine does not make yet (the master library, the sensor temperature, a rotated camera) show in Spec mode
 only, marked ◇.
 
-Classes: ``FramesView`` (the Files page, sources.py, and the Sessions page).
+Classes: ``FramesView`` (the Load and Inspect tabs, sources.py, and the Sessions tab).
 """
 from __future__ import annotations
 
@@ -31,11 +31,17 @@ from PySide6.QtWidgets import (
 
 from .. import texts
 from . import prefs
-from .i18n import _, language, number, plain_error, plural
-from .icons import IconLabel
+from .i18n import _, in_context, language, number, plain_error, plural
+from .icons import IconLabel, set_icon
 from .imageview import exposure_text
 from .services.inspect import ProjectFrames, service_of
 from .widgets import NEW, clear, label
+
+#: the tabs of a session's frames (#186): key, word, icon, tooltip; Inspect opens on Load
+TABS = (("load", "Load", "import", "Add the session's files kind by kind: drop them on their zone, or click it to choose "
+         "them"),
+        ("inspect", "Inspect", "inspect", "Review the session's frames: grid, viewer and list; keep or exclude them"),
+        ("sessions", "Sessions", "samples", "The project's sessions in a table, and the health check of the data set"))
 
 MONTHS = {"en": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
           "fr": ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]}
@@ -282,15 +288,18 @@ class FramesView(QWidget):
         h = QHBoxLayout(bar)
         h.setContentsMargins(10, 6, 10, 6)
         g = QButtonGroup(self)
-        self.tabs = {}                                     # by page: 0 the table, 1 the files
-        for i, t in ((1, _("Files")), (0, _("Sessions"))):
-            b = QPushButton(t)
-            b.setObjectName("face")
+        self.tabs = {}                                     # "load" and "inspect": the files (page 1); "sessions": page 0
+        for key, word, role, tip in TABS:
+            b = set_icon(QPushButton(in_context("frames", word)), role, 20)   # « Inspecter »: the mode is « Inspection »
+            b.setObjectName("seg")                         # the look of the graph's Blocks / Folded / Table
             b.setCheckable(True)
-            b.clicked.connect(lambda _x=False, k=i: self.show_page(k))
+            b.setToolTip(_(tip))
+            b.setMinimumWidth(104)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(lambda _x=False, k=key: self.show_page(0) if k == "sessions" else self.show_page(1, k))
             g.addButton(b)
             h.addWidget(b)
-            self.tabs[i] = b
+            self.tabs[key] = b
         h.addStretch(1)
         self.b_add = QPushButton(_("Add session…"))
         self.b_add.clicked.connect(self.add_session)
@@ -313,25 +322,39 @@ class FramesView(QWidget):
         self.pages.addWidget(browser)
         self.service.framesReady.connect(self._data_ready)
         self.service.readFailed.connect(self._read_failed)
-        # the Files page, not read yet: Inspect reads it when it shows a Session block (#115: every light's header was
+        # the Load tab, not read yet: Inspect reads it when it shows a Session block (#115: every light's header was
         # read as the project opened, Inspect hidden, beside the worker's first reads)
+        self.open_on_load()
+
+    def open_on_load(self):
+        """Inspect opens on Load (#186): the five kinds and their counts, whatever the session holds already. The
+        browser is shown again only when it was on Inspect (the window's refresh may find nothing else changed)."""
         self.pages.setCurrentIndex(1)
-        self.tabs[1].setChecked(True)
+        if getattr(self.browser, "tab", "load") != "load":
+            self.browser.set_tab("load")
+        self._check_tab()
+
+    def _check_tab(self):
+        key = "sessions" if self.pages.currentIndex() == 0 else getattr(self.browser, "tab", "load")
+        self.tabs[key].setChecked(True)
 
     def add_session(self):
-        """A new session, without frames: its files are added on the Files page, shown then."""
+        """A new session, without frames: its files are added on the Load tab, shown then."""
         self.browser.add_session()
         self.show_page(1)
         self.imported.emit()
 
     def open_session(self, row: int):
-        """A session of the table: its files."""
+        """A session of the table: its files, on Load."""
         self.browser.show_session(self.s.p.sessions[row].id)
         self.show_page(1)
 
-    def show_page(self, i):
+    def show_page(self, i, tab: str = "load"):
+        """0 the table of the sessions; 1 the files of the session shown, on ``tab`` ("load" or "inspect")."""
         self.pages.setCurrentIndex(i)
-        self.tabs[i].setChecked(True)
+        if i == 1 and hasattr(self.browser, "tab"):
+            self.browser.tab = tab
+        self._check_tab()
         if i == 0:
             self.refresh()
         elif hasattr(self.browser, "refresh"):

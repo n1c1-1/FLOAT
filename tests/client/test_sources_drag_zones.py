@@ -1,6 +1,6 @@
-"""Session files page (#168): while files are dragged over it the centre shows five large zones with their counts; a
-drop in a zone is files of that kind; they go away after the drop or when the drag leaves; an empty kind keeps them and
-a click opens the file dialog for that kind."""
+"""Session files, Inspect tab (#168): while files are dragged over it the centre shows five large zones with their
+counts; a drop in a zone is files of that kind; they go away after the drop or when the drag leaves; an empty kind keeps
+them and a click opens the file dialog for that kind. The Load tab shows them always (test_sources_load_tab.py)."""
 from __future__ import annotations
 
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
@@ -25,6 +25,7 @@ def shown(tmp_path, monkeypatch):
     view.resize(1400, 800)
     view.show()
     view.show_session(1, "lights")
+    view.set_tab("inspect")
     QApplication.processEvents()
     return w, m, page, view
 
@@ -41,7 +42,7 @@ def test_drag_shows_four_zones_drop_on_darks_adds_darks_only_and_leave_hides(qap
         QApplication.processEvents()
         zones = view.stack.currentWidget().findChildren(DropZone)
         assert view.stack.currentIndex() == 3 and [z.key for z in zones] == ["lights", "darks", "flats", "bias", "flat_darks"]
-        assert zones[0].count.text() == f"{view.held('lights')} files" and zones[1].count.text() == "No file"
+        assert zones[0].title.text() == f"Lights · {view.count_of('lights')}" and zones[1].title.text() == "Darks · 0"
         z0, area = zones[0], view.stack
         assert z0.height() > area.height() // 3 and z0.width() > area.width() // 4      # large: they fill the area
         lights = list(m.p.session(1).lights)

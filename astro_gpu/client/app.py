@@ -1270,6 +1270,7 @@ class Main(QMainWindow):
         s = self.s
         self.browser = SourcesView(s)
         self.browser.toast.connect(self.flash)
+        self.browser.refused.connect(self._drop_refused)
         self.frames = FramesView(s, self.browser)
         self.post_holder = PageHolder(self.post_page)
         tune = TuneView(s, self.steps, self.frames, self.post_holder)
@@ -1295,6 +1296,15 @@ class Main(QMainWindow):
         self.browser.goChain.connect(lambda k: self.select(step=k) if s.path is not None else None)
         self.tune = tune
         return tune
+
+    def _drop_refused(self, text: str):
+        """Files dropped off the places of Inspect: said in the strip until it is closed or files are added ("": the
+        strip goes if it still says that, never another word it holds)."""
+        if text:
+            self.banner.say(text)
+            self._refusal = text
+        elif self.banner.isVisible() and self.banner.text.text() == getattr(self, "_refusal", None):
+            self.banner.hide()
 
     def post_page(self) -> QWidget:
         """Post: PostPage3, on the project's render worker (made the first time Post is shown)."""
@@ -1405,6 +1415,8 @@ class Main(QMainWindow):
                     s.select(step="final")
             elif i == 1 and s.sel_step == "final":
                 self.select(step=self._last_step or ("post" if s.path is not None else "sources"))
+        if i == 1 and was != 1 and self.frames is not None:
+            self.frames.open_on_load()                   # a session's frames open on Load (#186)
         self.mode = i
         self.modes.setCurrentIndex(0 if i == 0 else 2 if i == 3 else 1)
         self.mode_btns[i].setChecked(True)
@@ -2556,7 +2568,7 @@ class Main(QMainWindow):
                 page.centre.currentWidget() is page.templates:
             self.flash(_("Choose a template first (a click on its card), then drop the frames on its Session block"))
         elif self.mode == 1:
-            self.flash(_("Frames go on a Session block's page in Inspect (its Files), or on the block in the Graph"))
+            self.flash(_("Frames go on a Session block's Load tab in Inspect, or on the block in the Graph"))
         else:
             self.flash(_("Frames go on a Session block, or on one of its rows, in the Graph"))
 

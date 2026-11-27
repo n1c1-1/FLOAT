@@ -240,7 +240,7 @@ def test_the_session_files_are_added_taken_out_and_said_kind_by_kind(qapp, tmp_p
     said: list = []
     view.toast.connect(said.append)
     try:
-        view.refresh()
+        view.set_tab("inspect")                                                   # its frames, not Load's zones
         view.select_group("darks")
         assert view.stack.currentIndex() == 3 and "Drop your files on their zone, or use Add files." in texts(view)
         assert not view.mode_btns[0].isEnabled()

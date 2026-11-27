@@ -96,7 +96,7 @@ def test_sources_take_dropped_files_on_a_kinds_row_and_say_it_elsewhere(qapp, tm
     """The testers' pass 2: in Inspect's Files page every drop was refused (the page took the files as they entered,
     not as they moved over it). A kind's row is the place that takes them; anywhere else the drop is taken, adds
     nothing and says where to drop."""
-    from astro_gpu.client.sources import GroupRow, SourcesView
+    from astro_gpu.client.sources import DROP_REFUSED, GroupRow, SourcesView
     darks = [x for x in night(tmp_path / "darks") if x.endswith(".fits")][:2]
     w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
     view = SourcesView(m)
@@ -104,9 +104,9 @@ def test_sources_take_dropped_files_on_a_kinds_row_and_say_it_elsewhere(qapp, tm
         sid = m.p.sessions[0].id
         view.show_session(sid, "darks")
         said: list = []
-        view.toast.connect(said.append)
+        view.refused.connect(said.append)
         mid = view.stack.mapTo(view, view.stack.rect().center())  # off the rows: nothing added, said
-        assert _drop(view, [darks[0]], mid) and not m.p.session(sid).darks and said[-1] == "Drop on a row"
+        assert _drop(view, [darks[0]], mid) and not m.p.session(sid).darks and said[-1] == DROP_REFUSED
         assert _drop(next(r for r in view.findChildren(GroupRow) if r.key == "darks"), [darks[0]])
         assert len(m.p.session(sid).darks) == 1
         view.refresh()

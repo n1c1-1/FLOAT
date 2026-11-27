@@ -15,6 +15,7 @@ import shiboken6
 from PySide6.QtCore import QObject, Signal
 
 from ..i18n import _
+from ..names import shown
 from . import files
 from .table_reader import Reader
 
@@ -101,10 +102,13 @@ class GraphDrops(QObject):
             self._say(bridge.say(out.reason) if out.reason else _("Not possible"), [])
             return out
         said = []
+        # the session's own name, as Inspect says it: a one-night workflow's Session block is titled by its workflow
+        # (« 2 darks added to “Full” » named the workflow)
+        name = shown(doc.graph.blocks[session].name or "") or doc.title(session)
         for kind, (res, ignored) in lots.items():
             self.read(session, kind, doc.files_of(session, kind)[1])
             taken = res.frames()
-            base = files.drop_toast(kind, doc.title(session), len(taken), "add")
+            base = files.drop_toast(kind, name, len(taken), "add")
             said.append(files.drop_sentence(base, res, "add", ignored, taken))
         note = bridge.take_stale()                      # a computed stack: what it computes again, said too
         one = next(iter(lots.values()))[0] if len(lots) == 1 else None

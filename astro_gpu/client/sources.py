@@ -1,7 +1,7 @@
 """The files of a session: its lights and calibration frames kind by kind, added and taken out here one by one from
 anywhere on the disk (nothing is guessed from a folder's name: each file goes where the user puts it), their calibration
 matching, and a raw frames browser (grid, the common viewer with its frame sequence, sortable list) where frames are kept
-or excluded.
+or excluded. Two tabs (#186): Load, the five kinds' zones with their counts, always; Inspect, the browser.
 
 The grid's thumbnails are made by the worker from the raw files (``api.frame_thumb``: one stretch for all the lights of
 a session, so that a hazy frame looks darker when blinking). The viewer (``imageview.ImageView``) reads the raw frame
@@ -71,6 +71,9 @@ GROUPS = [("lights", "Lights", "Lights"), ("darks", "Darks", "Calibration"), ("f
 #: the kinds of the large zones shown while files are dragged: every kind the left bar has
 ZONE_KINDS = tuple(g[0] for g in GROUPS)
 COUNT_KEY = {"lights": "lights", "darks": "darks", "flats": "flats", "bias": "bias", "flat_darks": "dark_flats"}
+#: files dropped off a kind's zone or row: refused, said until closed (#186)
+DROP_REFUSED = ("Not added: drop the files on the zone or the row of their kind (Lights, Darks, Flats, Bias, Dark "
+                "flats).")
 #: under this exposure (s), lights look like flats: a light of the deep sky lasts seconds, a flat a fraction of one
 FLAT_LIKE_S = 0.1
 
@@ -165,9 +168,9 @@ def _ancestors(w):
 
 
 class DropZone(QFrame):
-    """A large place to drop the files of ONE kind, in the centre of an empty kind: named, it takes a drop exactly as
-    the kind's row does (``dropped``) and a click opens the file dialog for its kind. The kind is the zone, never read
-    from the files."""
+    """A large place to drop the files of ONE kind (the Load tab shows the five): named with what the kind holds
+    (« Darks · 0 »), it takes a drop exactly as the kind's row does (``dropped``) and a click opens the file dialog for
+    its kind. The kind is the zone, never read from the files."""
     dropped = Signal(str, list)                        # kind, the files or folders
     clicked = Signal(str)
     left = Signal()                                    # the drag left it, or ended on it
@@ -186,22 +189,20 @@ class DropZone(QFrame):
         self.setStyleSheet(self._style)
         v = QVBoxLayout(self)
         v.setAlignment(Qt.AlignCenter)
-        a = QLabel(title)
-        a.setStyleSheet("font-weight: 600; font-size: 12pt; background: transparent;")
+        self.name = title
+        self.title = QLabel(title)
+        self.title.setStyleSheet("font-weight: 600; font-size: 12pt; background: transparent;")
         b = QLabel(_("Drop files here"))
         b.setObjectName("dim")
         b.setStyleSheet("background: transparent;")
-        self.count = QLabel("")
-        self.count.setStyleSheet("font-size: 11pt; background: transparent;")
-        for x in (a, self.count, b):
+        for x in (self.title, b):
             x.setAttribute(Qt.WA_TransparentForMouseEvents)
-        v.addWidget(a, 0, Qt.AlignHCenter)
-        v.addWidget(self.count, 0, Qt.AlignHCenter)
+        v.addWidget(self.title, 0, Qt.AlignHCenter)
         v.addWidget(b, 0, Qt.AlignHCenter)
 
     def set_count(self, n: int):
-        """What the kind holds, under its name (the page shown while files are dragged says it for each zone)."""
-        self.count.setText(plural(n, "{n} file", "{n} files") if n else _("No file"))
+        """What the kind holds, beside its name: « Lights · 50 », « Darks · 0 »."""
+        self.title.setText(f"{self.name} · {n}")
 
     def mousePressEvent(self, e):                                    # noqa: N802 - Qt's name
         self.clicked.emit(self.key)
@@ -310,6 +311,9 @@ def calib_rows(n: int, info: dict | None, first_time: str | None, gain: bool = F
 class SourcesView(QWidget):
     goChain = Signal(str)
     toast = Signal(str)                                    # what an addition or a removal did
+    #: a drop refused, said until it is closed or replaced (the window's strip): a word in the status line was gone
+    #: before it was read; "" once files are added, to take it away
+    refused = Signal(str)
     sendToPost = Signal(str, object, object)               # name, source, key (Send to Post of the viewer)
 
     def __init__(self, project, parent=None, service=None):
@@ -323,6 +327,8 @@ class SourcesView(QWidget):
         self._step = None                                  # the block opened when it was last looked at
         self.file_list: FileList | None = None             # the files of the kind shown
         self.mode = 1                                      # 0 grid, 1 viewer, 2 list
+        #: "load": the five kinds' zones, always (#186: before and after the lights alike); "inspect": the frames
+        self.tab = "load"
         self.cur = 0
         self.sort = "time"
         self.can_post = None                               # callable: Post takes images (the window sets it)
@@ -367,7 +373,8 @@ class SourcesView(QWidget):
         mv = QVBoxLayout(mid)
         mv.setContentsMargins(0, 0, 0, 0)
         mv.setSpacing(0)
-        bar = QHBoxLayout()
+        self._bar_w = QWidget()                            # the browser's bar: Inspect's only
+        bar = QHBoxLayout(self._bar_w)
         bar.setContentsMargins(10, 6, 10, 6)
         self.mode_btns = []
         g = QButtonGroup(self)
@@ -391,7 +398,7 @@ class SourcesView(QWidget):
         bar.addStretch(1)
         self.count = label("", "dim")
         bar.addWidget(self.count)
-        mv.addLayout(bar)
+        mv.addWidget(self._bar_w)
         self.info = label("", "small")
         self.info.setContentsMargins(12, 0, 12, 4)
         mv.addWidget(self.info)
@@ -489,8 +496,8 @@ class SourcesView(QWidget):
         return w
 
     def _drop_page(self):
-        """What an empty kind shows, in the place of its frames: a large drop zone for each kind (the rows at the left
-        take drops too); a zone takes the files through the same path as its row."""
+        """The Load tab, and what Inspect shows for an empty kind or while files are dragged over it: a large drop zone
+        for each kind (the rows at the left take drops too); a zone takes the files through the same path as its row."""
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(16, 12, 16, 12)
@@ -524,18 +531,26 @@ class SourcesView(QWidget):
         v.addLayout(row)
         return w
 
+    def set_tab(self, tab: str):
+        """Load (the five zones) or Inspect (the frames of the kind chosen)."""
+        self.tab = tab
+        self.refresh()
+
     def _show_zone(self):
-        """An empty kind shows where its files go; the grid, the viewer and the list come back with its first files."""
+        """Load shows the five zones and their counts; on Inspect an empty kind shows where its files go, and the grid,
+        the viewer and the list come back with its first files."""
         self.current_session()                             # taken away meanwhile (Ctrl+Z): another one is shown
+        load = self.tab == "load"
         empty = self.sid is not None and not self.held(self.group)
         self._dragging = self._dragging and self.sid is not None
-        if empty or self._dragging:
-            for k, z in self.zones.items():
-                z.set_count(self.held(k) if self.sid is not None else 0)
-        self.stack.setCurrentIndex(3 if empty or self._dragging else self.mode)
+        for k, z in self.zones.items():
+            z.set_count(self.count_of(k) if self.sid is not None else 0)
+        self.stack.setCurrentIndex(3 if load or empty or self._dragging else self.mode)
+        self._bar_w.setVisible(not load)
+        self._right_w.setVisible(not load)                 # the zones take its room
         for b in self.mode_btns + [self.sort_cb]:
             b.setEnabled(not empty)
-        self.info.setVisible(self.mode != 1 and not empty)
+        self.info.setVisible(not load and self.mode != 1 and not empty)
 
     # ------------------------------------------------------------ the files of the session
     def _session(self):
@@ -603,6 +618,7 @@ class SourcesView(QWidget):
         if n:
             said.insert(0, plural(n, "{n} file added to “{session}” · Ctrl+Z", "{n} files added to “{session}” · Ctrl+Z",
                                   session=self._session().name))
+            self.refused.emit("")                          # a drop refused before: said no more
             self.select_group(kind)
         self.toast.emit(" · ".join(said) if said else _("Nothing added: no frame in what was dropped"))
         if left and not n:
@@ -879,15 +895,16 @@ class SourcesView(QWidget):
         self._drag_left()
 
     def dropEvent(self, e):                                          # noqa: N802 - Qt's name
-        """Dropped anywhere but on a kind's row (a heading, the crumbs, the frames, a blank area): nothing is added and
-        the page says where to drop. The kind of a file is the row it is dropped on, never read from it."""
+        """Dropped anywhere but on a kind's zone or row (a heading, the frames, the space between the zones): nothing is
+        added, and the window's strip says where to drop until it is closed or files are added. The kind of a file is
+        the place it is dropped on, never read from it."""
         self._rows_lit(False)
         self._said = False
         self._drag_show(False)
         if local_paths(e.mimeData()) and self.sid is not None:
             e.setDropAction(Qt.IgnoreAction)
             e.accept()
-            self.toast.emit(_("Drop on a row"))
+            self.refused.emit(_(DROP_REFUSED))
 
     def eventFilter(self, obj, e):                                   # noqa: N802 - Qt's name
         """The frames, the viewer and the list (and their viewports) take no drop: theirs go to the page's."""
@@ -1143,7 +1160,7 @@ class SourcesView(QWidget):
     def _place_left(self):
         """The column just built is shown and laid out at once. Left to the next round of events, its rows stayed
         hidden and at the top meanwhile, and files dropped at that moment (the column is built again each time a
-        reading of the worker arrives) fell on the page: "Drop on a row"."""
+        reading of the worker arrives) fell on the page, refused."""
         inner = self._left_w.widget()
         if not inner.isVisible():
             return

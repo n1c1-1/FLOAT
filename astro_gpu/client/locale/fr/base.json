@@ -1141,6 +1141,8 @@
   "history|Undo": "Défaire",
   "history|Redo": "Rétablir",
   "history|Keep": "Garder",
+  "frames|Load": "Charger",
+  "frames|Inspect": "Inspecter",
   "Takes the step back now (Enter)": "Défait l'étape maintenant (Entrée)",
   "Makes the step again now (Enter)": "Rétablit l'étape maintenant (Entrée)",
   "session “{name}” added": "session « {name} » ajoutée",

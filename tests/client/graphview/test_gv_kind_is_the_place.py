@@ -77,16 +77,17 @@ def test_inspect_takes_files_on_a_kind_row_only(qapp, tmp_path, monkeypatch):
     from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl
     from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
     from PySide6.QtWidgets import QApplication
-    from astro_gpu.client.sources import GroupRow, SourcesView
+    from astro_gpu.client.sources import DROP_REFUSED, GroupRow, SourcesView
     from tests.client.test_sources_import import close, open_page
     w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
     view = SourcesView(m)
     view.resize(1400, 800)
     view.show()
     said: list = []
-    view.toast.connect(said.append)
+    view.refused.connect(said.append)
     try:
         view.show_session(1, "lights")
+        view.set_tab("inspect")
         QApplication.processEvents()
         flt = m.p.session(1).filter
         darks = labelled(tmp_path / "darks", 2, "OIII", "Dark Frame", "dark")
@@ -103,7 +104,7 @@ def test_inspect_takes_files_on_a_kind_row_only(qapp, tmp_path, monkeypatch):
         for at in (view._left_w.mapTo(view, QPoint(150, 790)), view.stack.mapTo(view, QPoint(40, 40))):
             drop(view, darks, at)                                       # a heading, the frames: nothing added
             assert m.p.session(1).lights == lights and not m.p.session(1).darks and not hasattr(view, "kind_menu")
-            assert said[-1] == "Drop on a row"
+            assert said[-1] == DROP_REFUSED
         row = next(r for r in view.findChildren(GroupRow) if r.key == "bias")
         drop(row, darks, QPoint(10, 10))                                # on the Bias row: biases, whatever they say
         assert len(m.p.session(1).bias) == 2 and not m.p.session(1).darks and m.p.session(1).lights == lights
@@ -118,16 +119,17 @@ def test_inspect_centre_takes_no_drop_and_says_so(qapp, tmp_path, monkeypatch):
     from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
     from PySide6.QtWidgets import QApplication, QLabel
     from astro_gpu.client import i18n
-    from astro_gpu.client.sources import GroupRow, SourcesView
+    from astro_gpu.client.sources import DROP_REFUSED, GroupRow, SourcesView
     from tests.client.test_sources_import import close, open_page
     w, m, page = open_page(tmp_path, monkeypatch, sessions=1, workflows=("Full",))
     view = SourcesView(m)
     view.resize(1400, 800)
     view.show()
     said: list = []
-    view.toast.connect(said.append)
+    view.refused.connect(said.append)
     try:
         view.show_session(1, "lights")
+        view.set_tab("inspect")
         QApplication.processEvents()
         darks = labelled(tmp_path / "darks", 2, "OIII", "Dark Frame", "dark")
         mime = QMimeData()
@@ -143,7 +145,7 @@ def test_inspect_centre_takes_no_drop_and_says_so(qapp, tmp_path, monkeypatch):
             said.clear()
             QApplication.sendEvent(target, QDropEvent(QPointF(at), Qt.CopyAction, mime, Qt.LeftButton,
                                                       Qt.NoModifier))
-            assert said == ["Drop on a row"]
+            assert said == [DROP_REFUSED]
             assert m.p.session(1).lights == lights and not m.p.session(1).darks and not m.p.session(1).bias
             assert not any("dashed" in r.styleSheet() for r in view.findChildren(GroupRow))
         view.show_session(1, "darks")                                   # an empty kind: one plain message
@@ -155,7 +157,8 @@ def test_inspect_centre_takes_no_drop_and_says_so(qapp, tmp_path, monkeypatch):
         try:
             assert i18n._("Drop your files on their zone, or use Add files.") == (
                 "Déposez vos fichiers sur leur zone, ou utilisez Ajouter fichiers.")
-            assert i18n._("Drop on a row") == "Déposez sur une ligne"
+            assert i18n._(DROP_REFUSED) == ("Non ajoutés : déposez les fichiers sur la zone ou la ligne de leur type "
+                                            "(Brutes, Darks, Flats, Offsets, Darks de flat).")
         finally:
             i18n.set_language("en")
     finally:
