@@ -28,8 +28,8 @@ ADDITIVE = frozenset({"sky", "contrast", "noise_mix", "smooth_px", "star_size", 
 SUGGESTED = 2.0
 LO, HI = 0.0, 4.0
 #: the Sky slider's table: the sky's level at positions 0 to 4 (position 2, 0.25, the default of a layer without a base
-#: of its own)
-SKY_TABLE = (0.15, 0.20, 0.25, 0.31, 0.37)
+#: of its own); its low end reaches a sky near black (issue #186: the sky could not be darkened enough)
+SKY_TABLE = (0.05, 0.15, 0.25, 0.31, 0.37)
 
 # the reasons of the greyed sliders (translated by the client's catalogues)
 WHY_STARS = "the star sliders work on the stars of the Stars/background block"

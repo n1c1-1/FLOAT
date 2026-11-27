@@ -29,7 +29,7 @@ def test_the_eleven_sliders_of_post():
         for name, t in sl.table.items():
             assert len(t) == sl.hi + 1 and abs(t[2] - getattr(s, name)) < 1e-9, (sl.key, name)
         assert sl.hi == (6 if sl.key == "saturation" else 4) == S.top(sl.key)
-    assert S.BY_KEY["sky"].table["sky"] == S.SKY_TABLE == (0.15, 0.20, 0.25, 0.31, 0.37)
+    assert S.BY_KEY["sky"].table["sky"] == S.SKY_TABLE == (0.05, 0.15, 0.25, 0.31, 0.37)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
 
@@ -75,8 +75,9 @@ def test_steps_and_ratios():
     assert b.sky == pytest.approx(0.42)                                 # a step: +0.12
     assert b.saturation == pytest.approx(1.0 * 0.6 / 1.2)               # a ratio
     half = S.settings_at("simple", None, {"sky": 1.5, "contrast": 3.5})
-    assert half.sky == pytest.approx(0.225) and half.contrast == pytest.approx(0.375)
+    assert half.sky == pytest.approx(0.20) and half.contrast == pytest.approx(0.375)
     assert S.settings_at("simple", {"sky": 0.55}, {"sky": 4}).sky == 0.6   # inside the setting's bounds (0.02-0.6)
+    assert S.settings_at("simple", {"sky": 0.3}, {"sky": 0}).sky == pytest.approx(0.10)   # the low end: a step of -0.20 (#186)
     assert S.settings_at("simple", None, {"sky": 9}).sky == pytest.approx(0.37)   # positions beyond 0-4 are clamped
     # Saturation goes on to +4 (positions 5, 6: the last step again), its law to +2 as it was, a range of its own
     assert S.BY_KEY["saturation"].table["saturation"][:5] == (0.6, 0.9, 1.2, 1.5, 1.85)
