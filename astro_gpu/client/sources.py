@@ -192,7 +192,7 @@ class DropZone(QFrame):
         self.name = title
         self.title = QLabel(title)
         self.title.setStyleSheet("font-weight: 600; font-size: 12pt; background: transparent;")
-        b = QLabel(_("Drop files here"))
+        b = QLabel(_("Click or drop files"))
         b.setObjectName("dim")
         b.setStyleSheet("background: transparent;")
         for x in (self.title, b):
