@@ -208,11 +208,13 @@ class MixRendering:
         return hit
 
     def _c0(self, lay, root, canvas, draft: bool = False, level: int = 0) -> float:
-        """The black point the stretch subtracts (the starless side's; the stars side's has none of its own)."""
+        """The black point the stretch subtracts (the starless side's, raised by its Black point setting as
+        ``colour_factor`` raises it; the stars side's has none of its own)."""
         if root != "starless":
             return 0.0
         from ..render.simple import _anchors
-        return float(_anchors(self._fusion_stats(lay, root, canvas, draft, level)["lum"])[0])
+        black = float(getattr(self.provider.fusion_settings(lay), "black", 0.0))
+        return float(_anchors(self._fusion_stats(lay, root, canvas, draft, level)["lum"], black)[0])
 
     def _eval(self, lay, node, path, leaf, one, c0, hook=None, rec=None):
         """(y, pre) of the mix at ``path``: its picture (3, h, w), made of its roles' images, and each role's image before

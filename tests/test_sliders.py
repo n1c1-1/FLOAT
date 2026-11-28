@@ -29,7 +29,9 @@ def test_the_eleven_sliders_of_post():
         for name, t in sl.table.items():
             assert len(t) == sl.hi + 1 and abs(t[2] - getattr(s, name)) < 1e-9, (sl.key, name)
         assert sl.hi == (6 if sl.key == "saturation" else 4) == S.top(sl.key)
-    assert S.BY_KEY["sky"].table["sky"] == S.SKY_TABLE == (0.05, 0.15, 0.25, 0.31, 0.37)
+    # Sky: the curve's target above 2, the black point below it (#186)
+    assert S.BY_KEY["sky"].table == {"sky": S.SKY_TABLE, "black": S.BLACK_TABLE}
+    assert S.SKY_TABLE == (0.25, 0.25, 0.25, 0.31, 0.37) and S.BLACK_TABLE == (0.84, 0.47, 0.0, 0.0, 0.0)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
 
@@ -75,9 +77,11 @@ def test_steps_and_ratios():
     assert b.sky == pytest.approx(0.42)                                 # a step: +0.12
     assert b.saturation == pytest.approx(1.0 * 0.6 / 1.2)               # a ratio
     half = S.settings_at("simple", None, {"sky": 1.5, "contrast": 3.5})
-    assert half.sky == pytest.approx(0.20) and half.contrast == pytest.approx(0.375)
+    assert half.sky == pytest.approx(0.25) and half.black == pytest.approx(0.235)
+    assert half.contrast == pytest.approx(0.375)
     assert S.settings_at("simple", {"sky": 0.55}, {"sky": 4}).sky == 0.6   # inside the setting's bounds (0.02-0.6)
-    assert S.settings_at("simple", {"sky": 0.3}, {"sky": 0}).sky == pytest.approx(0.10)   # the low end: a step of -0.20 (#186)
+    low = S.settings_at("simple", {"sky": 0.3}, {"sky": 0})        # the low end: the base's curve, its black raised (#186)
+    assert low.sky == pytest.approx(0.3) and low.black == pytest.approx(0.84)
     assert S.settings_at("simple", None, {"sky": 9}).sky == pytest.approx(0.37)   # positions beyond 0-4 are clamped
     # Saturation goes on to +4 (positions 5, 6: the last step again), its law to +2 as it was, a range of its own
     assert S.BY_KEY["saturation"].table["saturation"][:5] == (0.6, 0.9, 1.2, 1.5, 1.85)
@@ -132,6 +136,75 @@ def test_rendered_sliders_move_the_image():
     assert float(sat[0].std(0).mean()) < float(sat[1].std(0).mean())          # paler to more vivid
     base = eng.render(SimpleSettings(), 0.5).final
     assert torch.equal(eng.render(S.settings_at("simple", None, {k: 2 for k in S.KEYS}), 0.5).final, base)
+
+
+def _sky_and_nebula():
+    """A linear image: a sky of noise (20, deviation 2) and a nebula up to 600 above it, on a tenth of the field."""
+    rng = np.random.default_rng(4)
+    H, W = 160, 240
+    yy, xx = np.mgrid[0:H, 0:W]
+    neb = (600 * np.exp(-((xx - 120) ** 2 + (yy - 80) ** 2) / (2 * 15.0 ** 2))).astype(np.float32)
+    lin = np.stack([neb, neb * .8, neb * .7]) + 20 + rng.normal(0, 2, (3, H, W)).astype(np.float32)
+    return lin, neb
+
+
+def _lum(y: torch.Tensor) -> np.ndarray:
+    y = y.cpu().numpy()
+    return 0.2126 * y[0] + 0.7152 * y[1] + 0.0722 * y[2]
+
+
+def test_sky_below_its_default_raises_the_black_point():
+    """Sky's left half moves the stretch's black point toward the median sky and keeps the curve of its default, as the
+    black slider of a Levels tool (#186: a lower target of the curve hollowed the whole curve, the nebula darkened
+    almost as much as the sky). The sky falls toward black, the nebula's core moves little."""
+    lin, neb = _sky_and_nebula()
+    eng = SimpleRenderEngine.from_array(lin, device=DEV)
+    sky, core = neb < 0.5, neb > np.percentile(neb, 99)
+    L = {p: _lum(eng.render(S.settings_at("simple", None, {"sky": p}), 1.0).final) for p in (0, 1, 2)}
+
+    def fall(p, where):
+        return 1 - float(np.median(L[p][where])) / float(np.median(L[2][where]))
+    assert fall(0, sky) > 0.75 and fall(0, core) < 0.05, (fall(0, sky), fall(0, core))
+    assert fall(0, sky) > 15 * fall(0, core)
+    assert 0.25 < fall(1, sky) < fall(0, sky) and fall(1, core) < fall(0, core) + 1e-6
+    # the image's median lands where the lower targets of the curve put it (0.05 at 0, 0.15 at 1)
+    assert float(np.median(L[0])) == pytest.approx(0.05, abs=0.015)
+    assert float(np.median(L[1])) == pytest.approx(0.15, abs=0.015)
+    # the curve hollowed to the same median darkened the nebula several times more, its core and its middle tones
+    hollow = _lum(eng.render(SimpleSettings(sky=0.05), 1.0).final)
+    mid = (neb > 30) & (neb < 100)
+    for where in (core, mid):
+        assert 1 - float(np.median(hollow[where])) / float(np.median(L[2][where])) > 3 * fall(0, where)
+
+
+def test_sky_at_its_default_is_the_stretch_of_before():
+    """Position 2 and above: no black point raised; the picture is the screen transfer function as it was (black at
+    median - 2.8 MAD, white at the 99.995th percentile, the median at Sky)."""
+    from astro_gpu.render.simple import mtf, mtf_midtone
+    lin, _neb = _sky_and_nebula()
+    eng = SimpleRenderEngine.from_array(lin, device=DEV)
+    st = eng.prep["stats"]["lum"]
+    c0 = st["median"] - 2.8 * st["mad"]
+    xm = (st["median"] - c0) / (st["p99995"] - c0)
+    for pos, target in ((2, 0.25), (3, 0.31)):
+        s = S.settings_at("simple", {"keep_colours": 0.0, "saturation": 1.0}, {"sky": pos})
+        assert s.black == 0.0 and s.sky == pytest.approx(target)
+        x = torch.from_numpy(lin)
+        want = mtf(((x - c0) / (st["p99995"] - c0)).clamp(0, 1), mtf_midtone(xm, s.sky)).clamp(0, 1)
+        got = eng.render(s, 1.0).final.cpu()
+        assert torch.allclose(got, want.to(got.dtype), atol=1e-5)
+
+
+def test_faint_tones_turn_around_the_sky_the_black_point_leaves():
+    """Faint tones keeps the sky where the stretch put it: with the black point raised, that is under the Sky setting
+    (render/simple.sky_level), and the median sky does not move."""
+    lin, neb = _sky_and_nebula()
+    eng = SimpleRenderEngine.from_array(lin, device=DEV)
+    sky = neb < 0.5
+    s = S.settings_at("simple", None, {"sky": 0})
+    flat = float(np.median(_lum(eng.render(s, 1.0).final)[sky]))
+    lifted = float(np.median(_lum(eng.render(s.model_copy(update={"faint": 1.5}), 1.0).final)[sky]))
+    assert lifted == pytest.approx(flat, abs=1.5 / 255)
 
 
 def test_the_halpha_slider_is_for_colour_cameras_only():

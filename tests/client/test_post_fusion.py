@@ -115,11 +115,27 @@ def test_the_default_picture_is_the_mix_through_the_colour_preserving_stretch():
     assert np.abs(got - np.moveaxis(want, 0, -1)).max() < 2e-5
 
 
+def test_sky_darker_raises_the_black_point_of_the_mix():
+    """Sky's left half on a combination: the black point the leaves are stretched from is the one the stretch raised
+    (#186), so the picture is the mix through ``tone`` with that black point."""
+    p = planes()
+    g = master(sliders={"sky": 0.0})
+    got = compose([g]).rgb
+    x = mix(p)
+    st = image_stats(x, np.ones((H, W), bool))
+    s = Filters().fusion_settings(pe.normalize([g])[0])
+    assert s.black == pytest.approx(0.84)
+    want = SimpleRenderEngine.tone(torch.from_numpy(x), st, s.model_copy(update={"keep_colours": 1.0}), True).numpy()
+    assert np.abs(got - np.moveaxis(want, 0, -1)).max() < 2e-5
+    assert np.abs(got - compose([master()]).rgb).max() > 0.05
+
+
 def test_one_factor_stretches_every_filter_and_the_mix_of_the_stretched_filters_is_the_stretched_mix():
     p = planes()
     x = mix(p)
     st = image_stats(x, np.ones((H, W), bool))
-    for s in (SimpleSettings(), SimpleSettings(stretch="arcsinh"), SimpleSettings(faint=1.0)):
+    for s in (SimpleSettings(), SimpleSettings(stretch="arcsinh"), SimpleSettings(faint=1.0),
+              SimpleSettings(black=0.6, faint=1.0)):
         F, c0 = SimpleRenderEngine.colour_factor(torch.from_numpy(x), st, s)
         F = F.numpy()
         kids = {r: F * (p[r] - c0) for r in ROLES}

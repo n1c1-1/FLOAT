@@ -23,13 +23,20 @@ from .stars import StarSettings
 KINDS = ("simple", "stacking", "starless", "stars", "combined")
 STAR_KINDS = ("starless", "stars", "combined")
 #: settings moved by a step (the others by a ratio)
-ADDITIVE = frozenset({"sky", "contrast", "noise_mix", "smooth_px", "star_size", "halpha", "keep_colours",
+ADDITIVE = frozenset({"sky", "black", "contrast", "noise_mix", "smooth_px", "star_size", "halpha", "keep_colours",
                       "faint", "star_small"})
 SUGGESTED = 2.0
 LO, HI = 0.0, 4.0
-#: the Sky slider's table: the sky's level at positions 0 to 4 (position 2, 0.25, the default of a layer without a base
-#: of its own); its low end reaches a sky near black (issue #186: the sky could not be darkened enough)
-SKY_TABLE = (0.05, 0.15, 0.25, 0.31, 0.37)
+#: the Sky slider's tables (issue #186: the sky could not be darkened enough). Above position 2 (0.25, the default of a
+#: layer without a base of its own) the curve brings the sky higher (``SKY_TABLE``). Below, the curve keeps the shape
+#: of position 2 and its black point rises toward the median sky (``BLACK_TABLE``, render/simple ``black``), as the
+#: black slider of a Levels tool: the tones near the sky go to black and the nebula's bright tones move little (a lower
+#: target hollowed the whole curve: the nebula darkened almost as much as the sky). The shares bring the median sky to
+#: the levels the lower targets gave it (0.05 at 0, 0.15 at 1): with the sky near the black point (a small share of the
+#: range, as in any deep-sky image) the midtone function puts it at (1 - b) / ((1 - b) + (1 - s) / s), s = 0.25, so
+#: b = 1 - t (1 - s) / (s (1 - t)) for a level t: 0.84 and 0.47
+SKY_TABLE = (0.25, 0.25, 0.25, 0.31, 0.37)
+BLACK_TABLE = (0.84, 0.47, 0.0, 0.0, 0.0)
 
 # the reasons of the greyed sliders (translated by the client's catalogues)
 WHY_STARS = "the star sliders work on the stars of the Stars/background block"
@@ -78,7 +85,7 @@ def top(key: str) -> float:
 
 NEBULA, STARS = "Nebula and background", "Stars"
 SLIDERS: tuple[Slider, ...] = (
-    Slider("sky", "Sky", NEBULA, ("darker", "brighter"), {"sky": SKY_TABLE}),
+    Slider("sky", "Sky", NEBULA, ("darker", "brighter"), {"sky": SKY_TABLE, "black": BLACK_TABLE}),
     Slider("contrast", "Contrast", NEBULA, ("softer", "stronger"), {"contrast": (-0.35, -0.18, 0.0, 0.25, 0.5)}),
     # the faint tones above the sky (render/simple.faint_tones): a step from the base, 0 by default
     Slider("faint", "Faint tones", NEBULA, ("darker", "brighter"), {"faint": (-0.8, -0.4, 0.0, 0.8, 1.6)}),

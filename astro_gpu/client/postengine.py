@@ -814,8 +814,9 @@ def _torch_of(a: np.ndarray):
 
 def _stretch_reads(s) -> str:
     """What the colour-preserving stretch of a master layer reads of its settings (render/simple.SimpleRenderEngine.
-    colour_factor): the stretch, Sky, Faint tones, the Arcsinh's Strength, and Saturation for the Arcsinh's room."""
-    d = {k: getattr(s, k, None) for k in ("stretch", "sky", "faint", "stretch_strength")}
+    colour_factor): the stretch, Sky and its black point, Faint tones, the Arcsinh's Strength, and Saturation for the
+    Arcsinh's room."""
+    d = {k: getattr(s, k, None) for k in ("stretch", "sky", "black", "faint", "stretch_strength")}
     if d["stretch"] == "arcsinh":
         d["saturation"] = getattr(s, "saturation", None)
     return json.dumps(d, sort_keys=True, default=str)
