@@ -449,7 +449,7 @@ def _through_post(folder, lay) -> np.ndarray:
 
 def test_one_sky_table_and_a_stored_scale_of_before_is_read_past(tmp_path):
     """The Sky slider has one table: the sky at 0.25 by default, 0.37 at its right end, its black point raised on its
-    left half (0.84 of the way to the median sky at its left end, #186). A layer made on 16 or
+    left half (0.54 of the way to the median sky at its left end, #186). A layer made on 16 or
     17 November 2026 stored "sky_scale" (a second table, withdrawn: a compatibility patch): its file still loads, the
     key read past and never written again; the layer reads with the one table."""
     from astro_gpu.client.postengine import new_image_layer
@@ -457,7 +457,7 @@ def test_one_sky_table_and_a_stored_scale_of_before_is_read_past(tmp_path):
     from astro_gpu.render.sliders import SKY_TABLE, settings_at
     assert SimpleSettings().sky == 0.25 == SKY_TABLE[2]
     low = settings_at("simple", None, {"sky": 0.0})
-    assert low.sky == pytest.approx(0.25) and low.black == pytest.approx(0.84)
+    assert low.sky == pytest.approx(0.25) and low.black == pytest.approx(0.54)
     assert settings_at("simple", None, {"sky": 4.0}).sky == pytest.approx(0.37)
     old, = load_layers([dict(FIRST_LAYER, sky_scale=2)], {1})
     new = new_workflow_layer(1, "Full", True)

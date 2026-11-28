@@ -124,7 +124,7 @@ def test_sky_darker_raises_the_black_point_of_the_mix():
     x = mix(p)
     st = image_stats(x, np.ones((H, W), bool))
     s = Filters().fusion_settings(pe.normalize([g])[0])
-    assert s.black == pytest.approx(0.84)
+    assert s.black == pytest.approx(0.54)
     want = SimpleRenderEngine.tone(torch.from_numpy(x), st, s.model_copy(update={"keep_colours": 1.0}), True).numpy()
     assert np.abs(got - np.moveaxis(want, 0, -1)).max() < 2e-5
     assert np.abs(got - compose([master()]).rgb).max() > 0.05

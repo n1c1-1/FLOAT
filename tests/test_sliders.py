@@ -31,7 +31,7 @@ def test_the_eleven_sliders_of_post():
         assert sl.hi == (6 if sl.key == "saturation" else 4) == S.top(sl.key)
     # Sky: the curve's target above 2, the black point below it (#186)
     assert S.BY_KEY["sky"].table == {"sky": S.SKY_TABLE, "black": S.BLACK_TABLE}
-    assert S.SKY_TABLE == (0.25, 0.25, 0.25, 0.31, 0.37) and S.BLACK_TABLE == (0.84, 0.47, 0.0, 0.0, 0.0)
+    assert S.SKY_TABLE == (0.25, 0.25, 0.25, 0.31, 0.37) and S.BLACK_TABLE == (0.54, 0.27, 0.0, 0.0, 0.0)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
 
@@ -77,11 +77,11 @@ def test_steps_and_ratios():
     assert b.sky == pytest.approx(0.42)                                 # a step: +0.12
     assert b.saturation == pytest.approx(1.0 * 0.6 / 1.2)               # a ratio
     half = S.settings_at("simple", None, {"sky": 1.5, "contrast": 3.5})
-    assert half.sky == pytest.approx(0.25) and half.black == pytest.approx(0.235)
+    assert half.sky == pytest.approx(0.25) and half.black == pytest.approx(0.135)
     assert half.contrast == pytest.approx(0.375)
     assert S.settings_at("simple", {"sky": 0.55}, {"sky": 4}).sky == 0.6   # inside the setting's bounds (0.02-0.6)
     low = S.settings_at("simple", {"sky": 0.3}, {"sky": 0})        # the low end: the base's curve, its black raised (#186)
-    assert low.sky == pytest.approx(0.3) and low.black == pytest.approx(0.84)
+    assert low.sky == pytest.approx(0.3) and low.black == pytest.approx(0.54)
     assert S.settings_at("simple", None, {"sky": 9}).sky == pytest.approx(0.37)   # positions beyond 0-4 are clamped
     # Saturation goes on to +4 (positions 5, 6: the last step again), its law to +2 as it was, a range of its own
     assert S.BY_KEY["saturation"].table["saturation"][:5] == (0.6, 0.9, 1.2, 1.5, 1.85)
@@ -156,7 +156,8 @@ def _lum(y: torch.Tensor) -> np.ndarray:
 def test_sky_below_its_default_raises_the_black_point():
     """Sky's left half moves the stretch's black point toward the median sky and keeps the curve of its default, as the
     black slider of a Levels tool (#186: a lower target of the curve hollowed the whole curve, the nebula darkened
-    almost as much as the sky). The sky falls toward black, the nebula's core moves little."""
+    almost as much as the sky). The sky falls toward black, the nebula moves little; at the left end the black point
+    is at the darkest tenth of the sky's noise: the sky is dark, not black."""
     lin, neb = _sky_and_nebula()
     eng = SimpleRenderEngine.from_array(lin, device=DEV)
     sky, core = neb < 0.5, neb > np.percentile(neb, 99)
@@ -164,17 +165,16 @@ def test_sky_below_its_default_raises_the_black_point():
 
     def fall(p, where):
         return 1 - float(np.median(L[p][where])) / float(np.median(L[2][where]))
-    assert fall(0, sky) > 0.75 and fall(0, core) < 0.05, (fall(0, sky), fall(0, core))
-    assert fall(0, sky) > 15 * fall(0, core)
-    assert 0.25 < fall(1, sky) < fall(0, sky) and fall(1, core) < fall(0, core) + 1e-6
-    # the image's median lands where the lower targets of the curve put it (0.05 at 0, 0.15 at 1)
-    assert float(np.median(L[0])) == pytest.approx(0.05, abs=0.015)
-    assert float(np.median(L[1])) == pytest.approx(0.15, abs=0.015)
-    # the curve hollowed to the same median darkened the nebula several times more, its core and its middle tones
-    hollow = _lum(eng.render(SimpleSettings(sky=0.05), 1.0).final)
     mid = (neb > 30) & (neb < 100)
-    for where in (core, mid):
-        assert 1 - float(np.median(hollow[where])) / float(np.median(L[2][where])) > 3 * fall(0, where)
+    assert fall(0, sky) > 0.4 and fall(0, core) < 0.01 and fall(0, mid) < 0.03, (fall(0, sky), fall(0, mid))
+    assert fall(0, sky) > 15 * fall(0, mid)
+    assert 0.15 < fall(1, sky) < fall(0, sky) and fall(1, mid) < fall(0, mid)
+    # dark, not black: under a tenth of the sky at 0 (the stretch's black point at its darkest tenth)
+    assert float(np.mean(L[0][sky] <= 0.5 / 255)) < 0.1 and float(np.percentile(L[0][sky], 10)) > 0
+    # the curve hollowed to bring the sky as low darkened the nebula's middle tones many times more
+    hollow = _lum(eng.render(SimpleSettings(sky=0.12), 1.0).final)
+    assert float(np.median(hollow[sky])) <= float(np.median(L[0][sky])) + 0.01
+    assert 1 - float(np.median(hollow[mid])) / float(np.median(L[2][mid])) > 5 * fall(0, mid)
 
 
 def test_sky_at_its_default_is_the_stretch_of_before():

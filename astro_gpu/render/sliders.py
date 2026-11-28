@@ -31,12 +31,13 @@ LO, HI = 0.0, 4.0
 #: layer without a base of its own) the curve brings the sky higher (``SKY_TABLE``). Below, the curve keeps the shape
 #: of position 2 and its black point rises toward the median sky (``BLACK_TABLE``, render/simple ``black``), as the
 #: black slider of a Levels tool: the tones near the sky go to black and the nebula's bright tones move little (a lower
-#: target hollowed the whole curve: the nebula darkened almost as much as the sky). The shares bring the median sky to
-#: the levels the lower targets gave it (0.05 at 0, 0.15 at 1): with the sky near the black point (a small share of the
-#: range, as in any deep-sky image) the midtone function puts it at (1 - b) / ((1 - b) + (1 - s) / s), s = 0.25, so
-#: b = 1 - t (1 - s) / (s (1 - t)) for a level t: 0.84 and 0.47
+#: target hollowed the whole curve: the nebula darkened almost as much as the sky). At the left end the black point
+#: reaches the darkest tenth of a sky of noise, median - 1.28 sigma (the stretch's black is median - 2.8 sigma): b = 1 -
+#: 1.28 / 2.8 = 0.54, a sky near black that is not black, at most a tenth of its pixels at 0 (0.84, a sky at 0.05,
+#: left the darkest tenth at pure black and pushed its colour noise); between it and position 2 the black point moves
+#: evenly (0.27 at position 1)
 SKY_TABLE = (0.25, 0.25, 0.25, 0.31, 0.37)
-BLACK_TABLE = (0.84, 0.47, 0.0, 0.0, 0.0)
+BLACK_TABLE = (0.54, 0.27, 0.0, 0.0, 0.0)
 
 # the reasons of the greyed sliders (translated by the client's catalogues)
 WHY_STARS = "the star sliders work on the stars of the Stars/background block"
