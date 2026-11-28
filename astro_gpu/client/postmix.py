@@ -132,6 +132,9 @@ class MixRendering:
             lin, valid = self._leaf_lin(lay, root, at, (0, 0, W, H), canvas)
             x = self._lin_mix(lay, root, lin)
             hit = image_stats(x, valid if valid.any() else np.ones_like(valid))
+            from ..render.simple import FLOOR_BOX, sky_floor
+            L = 0.2126 * x[0] + 0.7152 * x[1] + 0.0722 * x[2]       # the darkest sky, for the Black point setting
+            hit["lum"]["floor"] = sky_floor(L, valid if valid.any() else np.ones_like(valid), FLOOR_BOX / 2 ** at)
             self._fstats[key] = hit
             while len(self._fstats) > 16:
                 self._fstats.pop(next(iter(self._fstats)))
@@ -208,13 +211,11 @@ class MixRendering:
         return hit
 
     def _c0(self, lay, root, canvas, draft: bool = False, level: int = 0) -> float:
-        """The black point the stretch subtracts (the starless side's, raised by its Black point setting as
-        ``colour_factor`` raises it; the stars side's has none of its own)."""
+        """The black point the stretch subtracts (the starless side's; the stars side's has none of its own)."""
         if root != "starless":
             return 0.0
         from ..render.simple import _anchors
-        black = float(getattr(self.provider.fusion_settings(lay), "black", 0.0))
-        return float(_anchors(self._fusion_stats(lay, root, canvas, draft, level)["lum"], black)[0])
+        return float(_anchors(self._fusion_stats(lay, root, canvas, draft, level)["lum"])[0])
 
     def _eval(self, lay, node, path, leaf, one, c0, hook=None, rec=None):
         """(y, pre) of the mix at ``path``: its picture (3, h, w), made of its roles' images, and each role's image before

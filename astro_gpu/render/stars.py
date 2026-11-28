@@ -38,7 +38,7 @@ from pydantic import field_validator
 from ..core import devices
 from ..core.params import P, check_choice
 from . import ops
-from .simple import Layers, SimpleRenderEngine, SimpleSettings, _anchors, continuum_ratio, emission, mtf, mtf_midtone
+from .simple import Layers, SimpleRenderEngine, SimpleSettings, continuum_ratio, emission, mtf, mtf_midtone
 
 #: how the stars go back on the starless image (the names of the reference image editor's modes)
 BLENDS = ("Screen", "Linear dodge (add)", "Lighten")
@@ -84,6 +84,9 @@ class StarsRenderEngine(SimpleRenderEngine):
     """Renders a star_removal folder: ``render(settings, scale, region, part=...)`` with part starless, stars or
     combined. Same interface as ``SimpleRenderEngine`` otherwise."""
 
+    #: the darkest sky (``floor``) is measured on the starless image: the background without its stars
+    FLOOR_OF = "starless"
+
     def __init__(self, folder: str | Path, device: str = "cuda:0"):
         self.dir = Path(folder)
         self.dev = torch.device(devices.usable(device))
@@ -121,6 +124,8 @@ class StarsRenderEngine(SimpleRenderEngine):
                 if s.halpha:
                     x = emission(x, self.continuum(), float(s.halpha), f)
                 st = self.prep["stats_full"]
+                if getattr(s, "black", 0.0) and not st.get("stretched"):   # the darkest sky, of the starless image
+                    st = {**st, "lum": {**st["lum"], "floor": self.floor()}}
                 if getattr(s, "stretch", "auto") == "arcsinh":
                     st = self._starless_white(st)
                 a = self.tone(x, st, s, linked)
@@ -137,7 +142,7 @@ class StarsRenderEngine(SimpleRenderEngine):
         removes the stars would leave the dips as dark discs. Black when the block carried none."""
         if "carried" not in self._host:
             return torch.zeros_like(self._layer("stars", f, box))
-        return self.star_tone(self._layer("carried", f, box), StarSettings(sky=s.sky, black=s.black), f)
+        return self.star_tone(self._layer("carried", f, box), StarSettings(sky=s.sky), f)
 
     @torch.no_grad()
     def linear_stars(self, scale: float = 1.0, region=None) -> Layers:
@@ -170,10 +175,9 @@ class StarsRenderEngine(SimpleRenderEngine):
         the settings that make them are the same: the starless image's sliders, a blend or an export (the same
         image at full size) take them as they are instead of making them again, which is the longest step of a
         render. One entry (the last), never mutated by what reads it."""
-        # the Sky and Black point settings are in the stars' stretch (star_tone: the midtone puts the sky of the whole
-        # image there, the black point sets its range), except for an image already stretched, whose stars are only
-        # scaled
-        sky = None if self.prep["stats_full"].get("stretched") else (s.sky, s.black)
+        # the Sky setting is in the stars' stretch (star_tone: the midtone puts the sky of the whole image there), except
+        # for an image already stretched, whose stars are only scaled
+        sky = None if self.prep["stats_full"].get("stretched") else s.sky
         key = (f, tuple(box) if box is not None else None, sky, s.star_strength, s.star_small, s.star_size,
                s.star_saturation)
         hit = getattr(self, "_star_cache", None)
@@ -200,9 +204,7 @@ class StarsRenderEngine(SimpleRenderEngine):
 
     def star_tone(self, x: torch.Tensor, s: StarSettings, f: int, stop=None) -> torch.Tensor:
         """The stars alone stretched: black at 0, the white and the midtone of the whole image (its sky at the
-        Sky setting), the midtone divided by ``star_strength``; then their size and their colour. A raised black point
-        (the Black point setting) narrows the range from the whole image's black to its white, as it does for the
-        starless image: a star's light above the sky is spread as the sky's surroundings are. ``stop``: called
+        Sky setting), the midtone divided by ``star_strength``; then their size and their colour. ``stop``: called
         between those steps (at full resolution each takes a second or more); it raises to abandon."""
         def check():
             if stop is not None:
@@ -211,8 +213,10 @@ class StarsRenderEngine(SimpleRenderEngine):
         if self.prep["stats_full"].get("stretched"):    # an image already stretched (issue #43): its stars as they are
             y = (x * float(s.star_strength)).clamp(0, 1)
         else:
-            m = min(max(mtf_midtone(_anchors(st)[2], s.sky) / s.star_strength, 1e-6), 0.5)
-            c0, hi, _xm = _anchors(st, s.black)
+            c0 = st["median"] - 2.8 * st["mad"]
+            hi = max(st["p99995"], c0 + 1e-6)
+            xm = min(max((st["median"] - c0) / (hi - c0), 1e-6), 1 - 1e-6)
+            m = min(max(mtf_midtone(xm, s.sky) / s.star_strength, 1e-6), 0.5)
             y = mtf((x / (hi - c0)).clamp(0, 1), m).clamp(0, 1)
         v = float(s.star_small)
         check()

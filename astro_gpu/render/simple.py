@@ -7,9 +7,10 @@ the denoised stack when there is one), the same from the raw stack (lin_raw.npy,
 
 * the raw stack mixed back into the denoised one, or the faint areas smoothed (noise smoothing);
 * a midtones transfer function from black = median - 2.8 MAD to white = the 99.995th percentile, the median sky at
-  ``sky`` (linked channels: on the luminance; unlinked: each channel); the black point raised toward the median sky by
-  ``black`` (the black slider of a Levels tool: the curve keeps its midtone, the tones near the sky go to black and the
-  bright ones move little);
+  ``sky`` (linked channels: on the luminance; unlinked: each channel);
+* the black point of that curve raised (``black``, the Sky slider's left half): the black slider of a Levels tool on
+  the luminance, the curve's midtone kept, each pixel's three channels scaled by its luminance's change (its hue and
+  saturation kept), up to where the darkest sky (``sky_floor``) shows at FLOOR_LEVEL;
 * the faint tones raised or lowered (``faint``): a generalised hyperbolic stretch (Payne and Cranfield) of the range
   above the sky, its black point and its symmetry point at the sky (the GHS users' placing: the symmetry point at the
   background's peak), on the luminance with the colour ratios kept: the tones just above the sky, the faint
@@ -63,6 +64,11 @@ class SimpleSettings(StageParams):
                    help="Display level of the median sky after the stretch (0 = black, 1 = white). 0.25 by default: "
                         "the target of the published screen transfer function (the median brought to 0.25).",
                    tip="0.15-0.25 looks natural on screen.")
+    black: float = P(0.0, label="Black point", level="internal", ge=0.0, le=1.0, step=0.01,
+                     help="The black point of the automatic stretch raised, on the luminance, as a share of its way "
+                          "from median - 2.8 MAD (0) to where the darkest sky shows at 0.05 (1); the curve keeps its "
+                          "midtone and each pixel its colour. Set by the Sky slider below its default "
+                          "(render/sliders.BLACK_TABLE); the Arcsinh does not read it (Sky is greyed under it).")
     contrast: float = P(0.0, label="Contrast", ge=-1.0, le=1.0, step=0.01,
                         help="S-curve after the stretch: above 0 the mid-tones are spread, below they are flattened.")
     saturation: float = P(1.2, label="Saturation", ge=0.0, le=3.0, step=0.05,
@@ -96,11 +102,6 @@ class SimpleSettings(StageParams):
                           "for most images, but an object hundreds of times brighter than the sky ends flat near "
                           "white. 'arcsinh': the colour-preserving arcsinh stretch (Lupton et al. 2004), a logarithm "
                           "for the bright tones: a bright core keeps its structure and its colours.")
-    black: float = P(0.0, label="Black point", level="internal", ge=0.0, le=1.0, step=0.01,
-                     help="The black point of the stretch raised toward the median sky, as a share of the way (0: median "
-                          "- 2.8 MAD, 1: the median sky, which goes to black); the curve keeps the midtone Sky gives "
-                          "it. Set by the Sky slider below its default (render/sliders.SKY_TABLE): darker, the sky goes "
-                          "to black and the bright tones move little, as the black slider of a Levels tool does.")
     stretch_strength: float = P(1.0, label="Strength", ge=0.0, le=2.0, step=0.025,
                                 help="Arcsinh: the level its sky lands at, as a multiple of the Sky setting (1: the sky "
                                      "at Sky within the range of the luminance). Below 1 the sky darkens and the bright "
@@ -189,16 +190,87 @@ def mtf_midtone(xm: float, target: float) -> float:
     return xm * (1 - target) / (xm - 2 * target * xm + target)
 
 
-def _anchors(st: dict, black: float = 0.0) -> tuple[float, float, float]:
+def _anchors(st: dict) -> tuple[float, float, float]:
     """The anchors of a stretch from the statistics of the luminance or of a channel: the black point (median - 2.8
-    MAD, raised toward the median by the share ``black``: the Black point setting), the white point (the 99.995th
-    percentile) and where the median sky sits between them (0..1). The midtone of a curve is read on the anchors of
-    ``black`` 0 (``mtf_midtone``): raising the black point moves the curve's start, not its shape."""
+    MAD), the white point (the 99.995th percentile) and where the median sky sits between them (0..1)."""
     c0 = st["median"] - 2.8 * st["mad"]
-    if black:
-        c0 += float(black) * (st["median"] - c0)
     hi = max(st["p99995"], c0 + 1e-6)
     return c0, hi, min(max((st["median"] - c0) / (hi - c0), 1e-6), 1 - 1e-6)
+
+
+#: the Black point setting's end (``black`` 1): the darkest sky shown at the level the published screen transfer's
+#: lowest target puts the median sky (the Sky slider's left end before, issue #186)
+FLOOR_LEVEL = 0.05
+#: the darkest sky (``sky_floor``): the darkest tenth of the sky's local levels, each the median of a square of
+#: FLOOR_BOX px of the full image (its noise averaged out, as the sky samples of a background extraction)
+FLOOR_BOX = 32
+FLOOR_SHARE = 10.0
+#: the luminance the raised black point is read on (``black_ratio``) smoothed by this radius (px of the image rendered):
+#: read on each pixel's own, its noise sets its factor, and the factor follows the green the luminance weighs most (a
+#: dark noisy sky turned green)
+BLACK_SMOOTH = 1.0
+
+
+def sky_floor(L: np.ndarray, valid: np.ndarray, box: int = FLOOR_BOX) -> float:
+    """The darkest sky of a luminance (H, W): the FLOOR_SHARE-th percentile of the medians of its ``box`` x ``box``
+    squares covered at 90 % (their covered pixels). The whole image's median when no square is covered.
+
+    The median and the MAD of the whole image place the default curve; they are not the sky's level where an object
+    fills the field (a galaxy: the median is the sky's, the darkest areas lie below it) or where a faint nebula covers
+    it (the Veil: the median stands above the darkest sky). The level a viewer reads as the background is the local
+    level of its darkest areas, its noise averaged out."""
+    box = max(2, int(box))
+    H, W = L.shape
+    h, w = H // box, W // box
+    if not h or not w or not valid.any():
+        return float(np.median(L[valid])) if valid.any() else 0.0
+    v = np.asarray(valid[:h * box, :w * box], bool).reshape(h, box, w, box)
+    cov = v.mean((1, 3))
+    a = np.where(v, np.asarray(L[:h * box, :w * box], np.float32).reshape(h, box, w, box), np.nan)
+    ok = cov >= 0.9
+    if not ok.any():
+        return float(np.median(L[valid]))
+    med = np.nanmedian(a.transpose(0, 2, 1, 3)[ok].reshape(int(ok.sum()), -1), axis=1)
+    return float(np.percentile(med, FLOOR_SHARE))
+
+
+def black_point(st: dict, target: float, black: float) -> float:
+    """The black point of the automatic stretch of the luminance's statistics ``st`` (with its ``floor``, the darkest
+    sky: ``sky_floor``) for the Sky setting ``target`` and the Black point setting ``black``: from median - 2.8 MAD
+    (0) to the point that brings the darkest sky to FLOOR_LEVEL through the curve of ``target`` (1), never below the
+    first nor above the median."""
+    c0, hi, xm = _anchors(st)
+    if not black:
+        return c0
+    m = mtf_midtone(xm, target)
+    u = float(mtf(FLOOR_LEVEL, 1 - m))                  # the inverse of the curve: the input shown at FLOOR_LEVEL
+    end = (float(st["floor"]) - u * hi) / (1 - u)
+    end = min(max(end, c0), float(st["median"]))
+    return c0 + float(black) * (end - c0)
+
+
+def sky_level(st: dict, target: float, black: float = 0.0) -> float:
+    """Where the automatic stretch puts the median sky of the luminance's statistics ``st``: the Sky setting
+    ``target``, lower once the black point is raised (``black``)."""
+    if not black:
+        return float(target)
+    c0, hi, xm = _anchors(st)
+    b = black_point(st, target, black)
+    return float(mtf(min(max((st["median"] - b) / (hi - b), 0.0), 1.0), mtf_midtone(xm, target)))
+
+
+def black_ratio(x: torch.Tensor, st: dict, target: float, black: float) -> torch.Tensor:
+    """(h, w): by how much the raised black point (``black_point``) lowers each pixel of a linear image (3, h, w):
+    its luminance through the automatic curve of ``target`` (the luminance's statistics ``st``) from the raised black
+    point, over the same from the curve's own, the curve's midtone the same. The three channels scaled by it keep the
+    pixel's hue and saturation: the Sky slider moves the brightness of the background, not its colour."""
+    c0, hi, xm = _anchors(st)
+    m = mtf_midtone(xm, target)
+    b = black_point(st, target, black)
+    L = ops.gaussian_blur(ops.luminance(x), BLACK_SMOOTH)
+    before = mtf(((L - c0) / (hi - c0)).clamp(0, 1), m)
+    after = mtf(((L - b) / (hi - b)).clamp(0, 1), m)
+    return torch.where(before > 1e-9, after / before.clamp(min=1e-9), torch.zeros_like(L)).clamp(0, 1)
 
 
 #: the highest level the Strength may ask for the sky, within the range of the luminance
@@ -221,18 +293,17 @@ def arcsinh_curve(x: torch.Tensor, st: dict, s, linked: bool) -> tuple[torch.Ten
     the anchors of the automatic stretch: the black point at median - 2.8 MAD (linked: the luminance's; else each
     channel's own) and the data divided so that the luminance's 99.995th percentile is 1; then pixel * asinh(L beta) /
     (L asinh(beta)), L the luminance: the same factor on the three channels. beta is ``arcsinh_strength``."""
-    black = float(getattr(s, "black", 0.0))
-    c0, hi, xm = _anchors(st["lum"], black)
+    c0, hi, xm = _anchors(st["lum"])
     if linked:
         xl = (x - c0).clamp(min=0)
     else:
-        xl = torch.stack([(x[c] - _anchors(st["channels"][c], black)[0]).clamp(min=0) for c in range(3)])
+        xl = torch.stack([(x[c] - _anchors(st["channels"][c])[0]).clamp(min=0) for c in range(3)])
     beta = arcsinh_strength(st, s)
     w = hi - c0
     return xl * (asinh_factor(ops.luminance(xl) / w, beta) / w)[None], asinh_level(xm, beta)
 
 
-def arcsinh_headroom(st: dict, saturation: float, linked: bool = True, black: float = 0.0) -> float:
+def arcsinh_headroom(st: dict, saturation: float, linked: bool = True) -> float:
     """By how much the Arcsinh stretch's picture is scaled down, as a whole, so that its brightest channel fits. The
     colours being kept, a channel stands above the luminance by its ratio to it in the stretched image too: with the
     luminance's white point at 1 a blue or red core passes 1. The white point of this stretch is therefore the largest
@@ -240,16 +311,16 @@ def arcsinh_headroom(st: dict, saturation: float, linked: bool = True, black: fl
     automatic stretch's white point (its own white point for the luminance, and for each channel when they are
     stretched apart), read from the statistics of the image the stretch is applied to; its ratio to the luminance's
     is carried through the Saturation setting (a channel c becomes L + saturation (c - L)). Never under 1: a grey
-    image keeps the luminance's white point. The black points are the stretch's (``black``: the Black point setting).
+    image keeps the luminance's white point.
 
     The first rule measured the 99.995th percentile of the stretched picture's largest channel: faint, strongly
     coloured pixels set it (the remains of red stars at a fifth of the range, the sky's noise in one channel), which
     the stretch factor raises most: the nebula stayed in the lower half of the range and the scale grew with the
     Strength. A pixel still over 1 is divided by its largest channel, its colour kept (``SimpleRenderEngine._arcsinh``)."""
-    c0, hi, _xm = _anchors(st["lum"], black)
+    c0, hi, _xm = _anchors(st["lum"])
     tops = []
     for ch in st.get("channels") or []:
-        b0 = c0 if linked else _anchors(ch, black)[0]
+        b0 = c0 if linked else _anchors(ch)[0]
         tops.append(ch["p99995"] - b0)
     ratio = max(max(tops, default=0.0) / (hi - c0), 1.0)
     return max(1.0 + max(float(saturation), 0.0) * (ratio - 1.0), 1.0)
@@ -258,14 +329,6 @@ def arcsinh_headroom(st: dict, saturation: float, linked: bool = True, black: fl
 def _smoothstep(x: torch.Tensor, a: float, b: float) -> torch.Tensor:
     t = ((x - a) / max(b - a, 1e-12)).clamp(0, 1)
     return t * t * (3 - 2 * t)
-
-
-def sky_level(st: dict, target: float, black: float = 0.0) -> float:
-    """Where the automatic stretch (``SimpleRenderEngine._stretch``) puts the median sky of the statistics ``st``: the
-    Sky setting ``target``, lower once the black point is raised (``black``)."""
-    if not black:
-        return float(target)
-    return float(mtf(_anchors(st, black)[2], mtf_midtone(_anchors(st)[2], target)))
 
 
 def _mix_stats(a: dict, b: dict | None, w: float) -> dict:
@@ -346,6 +409,18 @@ class SimpleRenderEngine:
             self._alpha = continuum_ratio(np.maximum(hp, 0))
         return self._alpha
 
+    #: the image the darkest sky is measured on (``floor``)
+    FLOOR_OF = "lin"
+
+    def floor(self) -> float:
+        """The darkest sky of the image (``sky_floor``) on the luminance of its linear image, every second pixel (the
+        squares of FLOOR_BOX px of the full image), measured once, when the Black point setting first asks for it."""
+        if getattr(self, "_floor", None) is None:
+            a = self._host[self.FLOOR_OF][:, ::2, ::2].numpy()
+            L = 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2]
+            self._floor = sky_floor(L, self.valid_host[::2, ::2].numpy(), FLOOR_BOX // 2)
+        return self._floor
+
     @property
     def nbytes(self) -> int:
         return sum(t.numel() * t.element_size() for t in self._host.values()) + self.valid_host.numel()
@@ -416,31 +491,32 @@ class SimpleRenderEngine:
     def tone(x: torch.Tensor, st: dict, s: SimpleSettings, linked: bool) -> torch.Tensor:
         """The base stretch of a linear image, the automatic one (linked: on the luminance's statistics; else each
         channel on its own) or the Arcsinh, then the faint tones, the contrast and the saturation."""
-        black = float(getattr(s, "black", 0.0))
+        sky = s.sky                                # where the sky sits once stretched (Faint tones turns around it)
         arcsinh = getattr(s, "stretch", "auto") == "arcsinh" and not st.get("stretched")
-        # where the sky sits once stretched (Faint tones turns around it): the luminance's median, as the stretch
-        # with its black point leaves it
-        sky = s.sky if st.get("stretched") else sky_level(st["lum"], s.sky, black)
         if st.get("stretched"):                    # an image already stretched (issue #43): as it is
             y = x.clamp(0, 1)
         elif arcsinh:
             y, sky = SimpleRenderEngine._arcsinh(x, st, s, linked)
         elif linked:
-            y = SimpleRenderEngine._stretch(x, st["lum"], s.sky, black)
+            y = SimpleRenderEngine._stretch(x, st["lum"], s.sky)
         else:
-            y = torch.stack([SimpleRenderEngine._stretch(x[c], st["channels"][c], s.sky, black) for c in range(3)])
+            y = torch.stack([SimpleRenderEngine._stretch(x[c], st["channels"][c], s.sky) for c in range(3)])
         k = 0.0 if st.get("stretched") or arcsinh else float(getattr(s, "keep_colours", 0.0))
         if k > 0:
             # the luminance stretched and the channels scaled by its gain (Lupton et al. 2004, PASP 116, 133): the
             # ratios of the linear image kept; the black point first, as the stretch has it
             lum = st["lum"]
-            c0 = _anchors(lum, black)[0]
+            c0 = lum["median"] - 2.8 * lum["mad"]
             xl = (x - c0).clamp(min=0)
             L = ops.luminance(xl)
-            gain = SimpleRenderEngine._stretch(L + c0, lum, s.sky, black) / L.clamp(min=1e-6)
+            gain = SimpleRenderEngine._stretch(L + c0, lum, s.sky) / L.clamp(min=1e-6)
             yk = xl * gain[None]
             m = yk.amax(0, keepdim=True).clamp(min=1.0)              # a channel over 1: the colour kept, scaled down
             y = (1 - k) * y + k * (yk / m)
+        black = 0.0 if st.get("stretched") or arcsinh else float(getattr(s, "black", 0.0))
+        if black:                                  # the black point raised on the luminance, each pixel's colour kept
+            y = y * black_ratio(x, st["lum"], s.sky, black)[None]
+            sky = sky_level(st["lum"], s.sky, black)
         if getattr(s, "faint", 0.0) and not st.get("stretched"):    # an image already stretched keeps its tones
             y = faint_tones(y, sky, float(s.faint))
         return SimpleRenderEngine.finish(y, s)
@@ -460,25 +536,29 @@ class SimpleRenderEngine:
         per pixel, the same on its three channels: the colour-preserving stretch (Lupton et al. 2004, PASP 116, 133),
         the luminance (the luminance's statistics ``st``) brought to the screen and the channels scaled with it, by
         the automatic curve (``tone`` with Colours at 1) or the Arcsinh, a pixel over 1 brought under it, then the
-        Faint tones, also a factor on the luminance. ``x``'s stretch is ``factor * (x - black point)`` (clipped at 0;
-        the black point raised by the Black point setting),
+        Faint tones, also a factor on the luminance, as the raised black point is (``black_ratio``; the black point
+        returned stays the curve's own, median - 2.8 MAD). ``x``'s stretch is ``factor * (x - black point)`` (clipped at
+        0),
         which ``finish`` ends: a factor is linear, so the channels of a mix of images can be stretched before the mix
         as well as after it (Post's combination layer, client/postfusion.py)."""
         lum = st["lum"]
-        black = float(getattr(s, "black", 0.0))
-        c0, hi, xm = _anchors(lum, black)
+        c0, hi, xm = _anchors(lum)
         xl = (x - c0).clamp(min=0)
         L = ops.luminance(xl)
         if getattr(s, "stretch", "auto") == "arcsinh":
-            room = arcsinh_headroom(st, float(s.saturation), True, black)
+            room = arcsinh_headroom(st, float(s.saturation), True)
             beta = arcsinh_strength(st, s)
             w = hi - c0
             g = asinh_factor(L / w, beta) / w / room
             sky = asinh_level(xm, beta) / room
         else:
-            g = SimpleRenderEngine._stretch(L + c0, lum, s.sky, black) / L.clamp(min=1e-6)
-            sky = sky_level(lum, s.sky, black)
+            g = SimpleRenderEngine._stretch(L + c0, lum, s.sky) / L.clamp(min=1e-6)
+            sky = s.sky
         g = g / (xl * g[None]).amax(0).clamp(min=1.0)
+        black = 0.0 if getattr(s, "stretch", "auto") == "arcsinh" else float(getattr(s, "black", 0.0))
+        if black:                                  # the black point raised: one more factor on the luminance
+            g = g * black_ratio(x, lum, s.sky, black)
+            sky = sky_level(lum, s.sky, black)
         if getattr(s, "faint", 0.0):
             y = xl * g[None]
             r = faint_ratio(y, sky, float(s.faint))
@@ -502,6 +582,8 @@ class SimpleRenderEngine:
         mixed = {"lum": _mix_stats(st["lum"], raw and raw["lum"], mix),
                  "channels": [_mix_stats(st["channels"][c], raw and raw["channels"][c], mix) for c in range(3)],
                  "stretched": bool(st.get("stretched"))}
+        if getattr(s, "black", 0.0):
+            mixed["lum"] = {**mixed["lum"], "floor": self.floor()}
         if s.halpha:
             x = emission(x, self.continuum(), float(s.halpha), f)
         y = self.tone(x, mixed, s, linked)
@@ -513,18 +595,16 @@ class SimpleRenderEngine:
         """The colour-preserving arcsinh stretch of a linear image (``arcsinh_curve``), scaled as a whole so that its
         brightest channel's white point fits (``arcsinh_headroom``), and the level its sky lands at. A pixel still over
         1 is divided by its largest channel, its colour kept (Lupton et al. 2004)."""
-        room = arcsinh_headroom(st, float(s.saturation), linked, float(getattr(s, "black", 0.0)))
+        room = arcsinh_headroom(st, float(s.saturation), linked)
         y, sky = arcsinh_curve(x, st, s, linked)
         y = y / room
         return (y / y.amax(0, keepdim=True).clamp(min=1.0)).clamp(0, 1), sky / room
 
     @staticmethod
-    def _stretch(x: torch.Tensor, st: dict, target: float, black: float = 0.0) -> torch.Tensor:
-        """Linked or one channel: black at median - 2.8 MAD, white at the 99.995th percentile, the median at target;
-        then the black point raised toward the median by ``black`` (the Black point setting), the midtone kept: the
-        median sky lands under target (``sky_level``)."""
-        m = mtf_midtone(_anchors(st)[2], target)
-        c0, hi, _xm = _anchors(st, black)
+    def _stretch(x: torch.Tensor, st: dict, target: float) -> torch.Tensor:
+        """Linked or one channel: black at median - 2.8 MAD, white at the 99.995th percentile, the median at target."""
+        c0, hi, xm = _anchors(st)
+        m = mtf_midtone(xm, target)
         return mtf(((x - c0) / (hi - c0)).clamp(0, 1), m).clamp(0, 1)
 
 

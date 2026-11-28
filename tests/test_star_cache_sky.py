@@ -25,8 +25,6 @@ def test_sky_rebuilds_the_stars_of_a_linear_image():
     assert e.calls == 1
     e._star_layer(StarSettings(sky=0.3), 1, None, "combined")
     assert e.calls == 2
-    e._star_layer(StarSettings(sky=0.3, black=0.5), 1, None, "combined")    # the black point too (#186)
-    assert e.calls == 3
 
 
 def test_sky_leaves_the_stars_of_a_stretched_image():

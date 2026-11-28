@@ -31,7 +31,7 @@ def test_the_eleven_sliders_of_post():
         assert sl.hi == (6 if sl.key == "saturation" else 4) == S.top(sl.key)
     # Sky: the curve's target above 2, the black point below it (#186)
     assert S.BY_KEY["sky"].table == {"sky": S.SKY_TABLE, "black": S.BLACK_TABLE}
-    assert S.SKY_TABLE == (0.25, 0.25, 0.25, 0.31, 0.37) and S.BLACK_TABLE == (0.54, 0.27, 0.0, 0.0, 0.0)
+    assert S.SKY_TABLE == (0.25, 0.25, 0.25, 0.31, 0.37) and S.BLACK_TABLE == (1.0, 0.5, 0.0, 0.0, 0.0)
     assert S.BY_KEY["noise"].table["noise_mix"][:3] == (0.4, 0.7, 1.0)
 
 
@@ -77,11 +77,11 @@ def test_steps_and_ratios():
     assert b.sky == pytest.approx(0.42)                                 # a step: +0.12
     assert b.saturation == pytest.approx(1.0 * 0.6 / 1.2)               # a ratio
     half = S.settings_at("simple", None, {"sky": 1.5, "contrast": 3.5})
-    assert half.sky == pytest.approx(0.25) and half.black == pytest.approx(0.135)
+    assert half.sky == pytest.approx(0.25) and half.black == pytest.approx(0.25)
     assert half.contrast == pytest.approx(0.375)
     assert S.settings_at("simple", {"sky": 0.55}, {"sky": 4}).sky == 0.6   # inside the setting's bounds (0.02-0.6)
     low = S.settings_at("simple", {"sky": 0.3}, {"sky": 0})        # the low end: the base's curve, its black raised (#186)
-    assert low.sky == pytest.approx(0.3) and low.black == pytest.approx(0.54)
+    assert low.sky == pytest.approx(0.3) and low.black == pytest.approx(1.0)
     assert S.settings_at("simple", None, {"sky": 9}).sky == pytest.approx(0.37)   # positions beyond 0-4 are clamped
     # Saturation goes on to +4 (positions 5, 6: the last step again), its law to +2 as it was, a range of its own
     assert S.BY_KEY["saturation"].table["saturation"][:5] == (0.6, 0.9, 1.2, 1.5, 1.85)
@@ -153,28 +153,92 @@ def _lum(y: torch.Tensor) -> np.ndarray:
     return 0.2126 * y[0] + 0.7152 * y[1] + 0.0722 * y[2]
 
 
+def _floor_shown(y: torch.Tensor, box: int = 32) -> float:
+    """The darkest tenth of the block medians of a rendering's luminance: the background a viewer reads."""
+    L = _lum(y)
+    h, w = L.shape[0] // box, L.shape[1] // box
+    med = np.median(L[:h * box, :w * box].reshape(h, box, w, box).transpose(0, 2, 1, 3).reshape(h, w, -1), axis=2)
+    return float(np.percentile(med, 10))
+
+
 def test_sky_below_its_default_raises_the_black_point():
-    """Sky's left half moves the stretch's black point toward the median sky and keeps the curve of its default, as the
-    black slider of a Levels tool (#186: a lower target of the curve hollowed the whole curve, the nebula darkened
-    almost as much as the sky). The sky falls toward black, the nebula moves little; at the left end the black point
-    is at the darkest tenth of the sky's noise: the sky is dark, not black."""
+    """Sky's left half raises the stretch's black point and keeps the curve of its default, as the black slider of a
+    Levels tool (#186: a lower target of the curve hollowed the whole curve, the nebula darkened almost as much as the
+    sky). The sky falls toward black, the nebula moves little; at the left end the darkest sky shows at FLOOR_LEVEL."""
+    from astro_gpu.render.simple import FLOOR_LEVEL
     lin, neb = _sky_and_nebula()
     eng = SimpleRenderEngine.from_array(lin, device=DEV)
     sky, core = neb < 0.5, neb > np.percentile(neb, 99)
-    L = {p: _lum(eng.render(S.settings_at("simple", None, {"sky": p}), 1.0).final) for p in (0, 1, 2)}
+    Y = {p: eng.render(S.settings_at("simple", None, {"sky": p}), 1.0).final for p in (0, 1, 2)}
+    L = {p: _lum(y) for p, y in Y.items()}
 
     def fall(p, where):
         return 1 - float(np.median(L[p][where])) / float(np.median(L[2][where]))
     mid = (neb > 30) & (neb < 100)
-    assert fall(0, sky) > 0.4 and fall(0, core) < 0.01 and fall(0, mid) < 0.03, (fall(0, sky), fall(0, mid))
+    assert fall(0, sky) > 0.6 and fall(0, core) < 0.01 and fall(0, mid) < 0.05, (fall(0, sky), fall(0, mid))
     assert fall(0, sky) > 15 * fall(0, mid)
-    assert 0.15 < fall(1, sky) < fall(0, sky) and fall(1, mid) < fall(0, mid)
-    # dark, not black: under a tenth of the sky at 0 (the stretch's black point at its darkest tenth)
-    assert float(np.mean(L[0][sky] <= 0.5 / 255)) < 0.1 and float(np.percentile(L[0][sky], 10)) > 0
+    assert 0.2 < fall(1, sky) < fall(0, sky) and fall(1, mid) < fall(0, mid)
+    assert _floor_shown(Y[0]) == pytest.approx(FLOOR_LEVEL, abs=0.02)
     # the curve hollowed to bring the sky as low darkened the nebula's middle tones many times more
-    hollow = _lum(eng.render(SimpleSettings(sky=0.12), 1.0).final)
-    assert float(np.median(hollow[sky])) <= float(np.median(L[0][sky])) + 0.01
+    hollow = _lum(eng.render(SimpleSettings(sky=0.05), 1.0).final)
+    assert float(np.median(hollow[sky])) <= float(np.median(L[0][sky])) + 0.02
     assert 1 - float(np.median(hollow[mid])) / float(np.median(L[2][mid])) > 5 * fall(0, mid)
+
+
+def test_the_left_end_reaches_the_darkest_sky_when_an_object_fills_the_field():
+    """The black point's end is set on the darkest sky (render/simple.sky_floor), not on the median and the MAD of the
+    whole image: a galaxy over most of the field puts its median and its spread on the galaxy, and the left end left
+    the sky at about 30 of 255 (#186, a galaxy of a smart telescope)."""
+    from astro_gpu.render.simple import FLOOR_LEVEL
+    rng = np.random.default_rng(6)
+    H, W = 192, 256
+    yy, xx = np.mgrid[0:H, 0:W]
+    gal = (300 * np.exp(-(((xx - 128) / 110.0) ** 2 + ((yy - 96) / 70.0) ** 2))).astype(np.float32)
+    lin = np.stack([gal, gal * .9, gal * .8]) + 20 + rng.normal(0, 3, (3, H, W)).astype(np.float32)
+    eng = SimpleRenderEngine.from_array(lin, device=DEV)
+    st = eng.prep["stats"]["lum"]
+    assert st["median"] > 20 + 3 * 2                  # the median is the galaxy's, not the sky's
+    y0 = eng.render(S.settings_at("simple", None, {"sky": 0}), 1.0).final
+    assert _floor_shown(y0) == pytest.approx(FLOOR_LEVEL, abs=0.02)
+    assert _floor_shown(eng.render(SimpleSettings(), 1.0).final) > 0.15
+
+
+def test_sky_darker_keeps_the_colour_of_the_background():
+    """The Sky slider moves the brightness of the background, not its colour: a sky with a cast and channels of
+    different noise keeps, toward black, the hue and the saturation it has at the default (#186: the black point taken
+    off each channel before the colours were read swelled the colour of the pixels near black, the median saturation
+    rose by half, a neutral galaxy's sky turned magenta; a pixel's factor read on its own noisy luminance turned it
+    green)."""
+    rng = np.random.default_rng(7)
+    H, W = 192, 256
+    yy, xx = np.mgrid[0:H, 0:W]
+    neb = (400 * np.exp(-((xx - 128) ** 2 + (yy - 96) ** 2) / (2 * 25.0 ** 2))).astype(np.float32)
+    noise = np.array([4.0, 2.0, 6.0], np.float32)[:, None, None]
+    lin = (np.stack([neb, neb * .6, neb * .7]) + np.array([20, 21, 23], np.float32)[:, None, None]
+           + noise * rng.normal(0, 1, (3, H, W)).astype(np.float32))
+    eng = SimpleRenderEngine.from_array(lin, device=DEV)
+    sky = neb < 0.5
+    box = 16
+
+    def sky_colour(y):                                 # the block medians of the sky, per channel
+        a = y.cpu().numpy()
+        h, w = H // box, W // box
+        m = [np.median(a[c, :h * box, :w * box].reshape(h, box, w, box).transpose(0, 2, 1, 3).reshape(h, w, -1), 2)
+             for c in range(3)]
+        keep = sky[:h * box, :w * box].reshape(h, box, w, box).all((1, 3))
+        return np.array([float(np.median(c[keep])) for c in m])
+
+    def saturation(y):                                 # HSV saturation of the sky's pixels
+        a = y.cpu().numpy()[:, sky]
+        mx = a.max(0)
+        return float(np.median(np.where(mx > 0, (mx - a.min(0)) / np.maximum(mx, 1e-9), 0)))
+    at2 = eng.render(S.settings_at("simple", None, {"sky": 2}), 1.0).final
+    for p in (0, 1):
+        y = eng.render(S.settings_at("simple", None, {"sky": p}), 1.0).final
+        c2, c = sky_colour(at2), sky_colour(y)
+        assert c.sum() < (0.6 if p == 0 else 0.9) * c2.sum()                 # darker
+        assert np.allclose(c / c.sum(), c2 / c2.sum(), atol=0.012), (p, c / c.sum(), c2 / c2.sum())   # same hue
+        assert saturation(y) < saturation(at2) + 0.03, (p, saturation(y), saturation(at2))
 
 
 def test_sky_at_its_default_is_the_stretch_of_before():

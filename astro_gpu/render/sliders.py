@@ -29,15 +29,13 @@ SUGGESTED = 2.0
 LO, HI = 0.0, 4.0
 #: the Sky slider's tables (issue #186: the sky could not be darkened enough). Above position 2 (0.25, the default of a
 #: layer without a base of its own) the curve brings the sky higher (``SKY_TABLE``). Below, the curve keeps the shape
-#: of position 2 and its black point rises toward the median sky (``BLACK_TABLE``, render/simple ``black``), as the
-#: black slider of a Levels tool: the tones near the sky go to black and the nebula's bright tones move little (a lower
-#: target hollowed the whole curve: the nebula darkened almost as much as the sky). At the left end the black point
-#: reaches the darkest tenth of a sky of noise, median - 1.28 sigma (the stretch's black is median - 2.8 sigma): b = 1 -
-#: 1.28 / 2.8 = 0.54, a sky near black that is not black, at most a tenth of its pixels at 0 (0.84, a sky at 0.05,
-#: left the darkest tenth at pure black and pushed its colour noise); between it and position 2 the black point moves
-#: evenly (0.27 at position 1)
+#: of position 2 and its black point rises (``BLACK_TABLE``, render/simple ``black``), as the black slider of a Levels
+#: tool on the luminance: the background goes toward black, its colour kept, the nebula's bright tones move little (a
+#: lower target hollowed the whole curve: the nebula darkened almost as much as the sky). The left end brings the
+#: darkest sky (render/simple.sky_floor) to 0.05, where the published transfer's lowest target put the median sky;
+#: the black point moves evenly between it and position 2
 SKY_TABLE = (0.25, 0.25, 0.25, 0.31, 0.37)
-BLACK_TABLE = (0.54, 0.27, 0.0, 0.0, 0.0)
+BLACK_TABLE = (1.0, 0.5, 0.0, 0.0, 0.0)
 
 # the reasons of the greyed sliders (translated by the client's catalogues)
 WHY_STARS = "the star sliders work on the stars of the Stars/background block"
